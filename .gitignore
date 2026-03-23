@@ -1,0 +1,40 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Node
+node_modules/
+dist/
+out/
+*.vsix
+
+# Python (if local STT/TTS server components)
+__pycache__/
+*.pyc
+.venv/
+
+# Test data (audio recordings — never commit)
+test-audio/
+*.wav
+*.mp3
+*.ogg
+*.flac
+
+# VS Code extension dev
+.vscode-test/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Models (too large for git)
+models/
+
+# Logs
+*.log
