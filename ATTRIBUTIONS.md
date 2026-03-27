@@ -7,33 +7,55 @@ VOQR is built on the shoulders of these open-source projects. Their licenses are
 ### OpenAI Whisper
 - **License:** MIT
 - **Repository:** https://github.com/openai/whisper
-- **Usage:** Local speech-to-text transcription (bundled small model, optional server mode)
+- **Usage:** Speech-to-text model weights (ggml-tiny, ggml-base, etc.)
 
-### whisper-node-addon
+### whisper.cpp
 - **License:** MIT
-- **Repository:** https://github.com/Kutalia/whisper-node-addon
-- **Usage:** Native Node.js bindings for Whisper inference
+- **Repository:** https://github.com/ggerganov/whisper.cpp
+- **Usage:** C++ inference engine for Whisper models. Runs as a local HTTP server for STT.
 
 ## Text-to-Speech
 
 ### Kokoro TTS
 - **License:** Apache 2.0
 - **Repository:** https://github.com/hexgrad/kokoro
-- **Usage:** Local text-to-speech synthesis
+- **Usage:** Local text-to-speech synthesis via Python server
 
 ## Voice Activity Detection
 
 ### Silero VAD
 - **License:** MIT
 - **Repository:** https://github.com/snakers4/silero-vad
-- **Usage:** Voice activity detection for hands-free mode
+- **Usage:** Voice activity detection model for speech segment identification
 
-## Speaker Identification
+### avr-vad
+- **License:** MIT
+- **Repository:** https://github.com/nickarora/avr-vad
+- **Usage:** Node.js wrapper for Silero VAD used in the extension host
 
-### SpeechBrain
+## Audio Capture
+
+### @analyticsinmotion/micstream
+- **License:** MIT
+- **Repository:** https://github.com/nickarora/micstream
+- **Usage:** PortAudio-based microphone capture on Windows and macOS
+
+### node-record-lpcm16
+- **License:** MIT
+- **Repository:** https://github.com/gillesdemey/node-record-lpcm16
+- **Usage:** arecord wrapper for microphone capture on Linux
+
+## Python Dependencies (TTS Server)
+
+### aiohttp
 - **License:** Apache 2.0
-- **Repository:** https://github.com/speechbrain/speechbrain
-- **Usage:** Speaker verification via ECAPA-TDNN embeddings (Pro feature)
+- **Repository:** https://github.com/aio-libs/aiohttp
+- **Usage:** HTTP server framework for the Kokoro TTS server
+
+### NumPy
+- **License:** BSD 3-Clause
+- **Repository:** https://github.com/numpy/numpy
+- **Usage:** Audio array processing (pause compression, silence trimming, resampling)
 
 ## Additional
 
