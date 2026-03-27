@@ -4,8 +4,9 @@
 
 > *(rhymes with "poker")*
 
-<!-- TODO: Replace with demo GIF once recorded -->
-<!-- ![VOQR Demo](assets/demo.gif) -->
+![VOQR Demo](demo.gif)
+
+*Click to talk. AI responds by voice. All local.* [Watch with audio →](https://youtu.be/YPq_U5BSbj4)
 
 VOQR adds voice interaction to every AI chat provider in VS Code. Speech-to-text and text-to-speech run entirely on your machine — your voice data never leaves your computer.
 
