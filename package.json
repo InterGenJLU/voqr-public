@@ -1,0 +1,167 @@
+{
+  "name": "voqr",
+  "displayName": "VOQR — Voice for AI Chat",
+  "description": "Talk to any AI. Hear every answer. Local STT and TTS for every AI chat provider in VS Code.",
+  "version": "0.1.0",
+  "publisher": "intergen",
+  "license": "MIT",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/InterGenJLU/voqr-public"
+  },
+  "bugs": {
+    "url": "https://github.com/InterGenJLU/voqr-public/issues"
+  },
+  "qna": "https://github.com/InterGenJLU/voqr-public/issues",
+  "galleryBanner": {
+    "color": "#1E1E1E",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.99.0"
+  },
+  "categories": [
+    "Chat",
+    "Machine Learning"
+  ],
+  "keywords": [
+    "voice",
+    "speech",
+    "stt",
+    "tts",
+    "ai",
+    "copilot",
+    "claude",
+    "accessibility"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "voqr.toggleVoicePanel",
+        "title": "VOQR: Toggle Voice Panel",
+        "icon": "$(mic)"
+      },
+      {
+        "command": "voqr.pushToTalk",
+        "title": "VOQR: Push to Talk"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "voqr.toggleVoicePanel",
+        "key": "ctrl+shift+v",
+        "mac": "cmd+shift+v"
+      },
+      {
+        "command": "voqr.pushToTalk",
+        "key": "ctrl+shift+space",
+        "win": "ctrl+f9",
+        "mac": "cmd+shift+space"
+      }
+    ],
+    "configuration": {
+      "title": "VOQR",
+      "properties": {
+        "voqr.sttServerUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8099",
+          "description": "URL of the local STT server."
+        },
+        "voqr.ttsServerUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8100",
+          "description": "URL of the local TTS server."
+        },
+        "voqr.ttsAutoPlay": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically speak AI responses aloud."
+        },
+        "voqr.ttsSpeed": {
+          "type": "number",
+          "default": 1,
+          "minimum": 0.5,
+          "maximum": 2,
+          "description": "TTS speech speed multiplier."
+        },
+        "voqr.inputMode": {
+          "type": "string",
+          "enum": [
+            "pushToTalk",
+            "voiceActivity"
+          ],
+          "default": "pushToTalk",
+          "description": "Voice input mode: push-to-talk or hands-free voice activity detection."
+        },
+        "voqr.debug": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable verbose logging to the VOQR output channel for troubleshooting."
+        },
+        "voqr.sttBackend": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "faster-whisper",
+            "external"
+          ],
+          "default": "auto",
+          "enumDescriptions": [
+            "Bundled whisper.cpp server — works out of the box, no dependencies",
+            "GPU-accelerated faster-whisper server — requires Python (Pro feature)",
+            "Use your own STT server at the configured URL"
+          ],
+          "description": "Which STT backend VOQR manages."
+        },
+        "voqr.sttModelSize": {
+          "type": "string",
+          "enum": [
+            "tiny",
+            "base",
+            "small",
+            "medium"
+          ],
+          "default": "tiny",
+          "description": "Whisper model size. Larger models are more accurate but slower and use more memory."
+        },
+        "voqr.whisperCppPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to whisper-server binary. Leave empty for auto-detection."
+        },
+        "voqr.whisperModelPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to Whisper GGML model file. Leave empty for auto-detection."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "lint": "eslint src/",
+    "test:normalizer": "python3 -m pytest server/tests/test_normalizer.py -v",
+    "test": "npm run test:normalizer",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.99.0",
+    "@typescript-eslint/eslint-plugin": "^8.57.2",
+    "@typescript-eslint/parser": "^8.57.2",
+    "esbuild": "^0.25.0",
+    "eslint": "^9.39.4",
+    "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "@analyticsinmotion/micstream": "^0.4.0",
+    "avr-vad": "^1.0.9",
+    "node-record-lpcm16": "^1.0.1"
+  }
+}

@@ -38,3 +38,9 @@ models/
 
 # Logs
 *.log
+
+# Development artifacts
+debug_data/
+images/
+videos/
+assets/

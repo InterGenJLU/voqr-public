@@ -1,0 +1,4 @@
+{
+    "voqr.debug": true,
+    "voqr.sttServerUrl": "http://127.0.0.1:8099"
+}
