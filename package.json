@@ -2,7 +2,7 @@
   "name": "voqr",
   "displayName": "VOQR — Voice for AI Chat",
   "description": "Talk to any AI. Hear every answer. Local STT and TTS for every AI chat provider in VS Code.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "intergen",
   "license": "MIT",
   "icon": "icon.png",
