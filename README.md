@@ -12,7 +12,7 @@ VOQR adds voice interaction to every AI chat provider in VS Code. Speech-to-text
 
 ## Features
 
-- **Universal** — works with Copilot, HuggingFace, Cerebras, AI Toolkit, and any OpenAI-compatible provider
+- **Universal** — works with Copilot, HuggingFace, AI Toolkit, and any provider that properly supports the VS Code Language Model API
 - **Local & private** — STT (Whisper) and TTS (Kokoro) run on your hardware. No cloud. No telemetry
 - **Streaming responses** — hear AI responses sentence-by-sentence as they generate, not after a long wait
 - **Push-to-talk or hands-free** — toggle between manual and voice-activated modes
@@ -31,17 +31,17 @@ That's it. No API keys for VOQR, no accounts, no configuration required.
 
 ## Supported Providers
 
-VOQR works with any AI provider that implements the [VS Code Language Model API](https://code.visualstudio.com/api/extension-guides/language-model):
+VOQR works with any AI provider that properly implements the [VS Code Language Model API](https://code.visualstudio.com/api/extension-guides/language-model):
 
-| Provider | Cost | Setup |
-|----------|------|-------|
-| **GitHub Copilot** | Copilot subscription | Install Copilot extension |
-| **HuggingFace** | Free tier available | Install extension + API token |
-| **Cerebras** | Free tier available | Install extension + API key |
-| **AI Toolkit** | Free (local models) | Install extension |
-| **OpenAI Compatible** | Varies | Install extension + endpoint config |
+| Provider | Cost | Setup | Wizard |
+|----------|------|-------|--------|
+| **GitHub Copilot** | Free tier (50 msgs/mo) | Install extension + GitHub sign-in | Guided |
+| **HuggingFace** | Free tier available | Install extension + API token | Guided |
+| **AI Toolkit** | Free (GitHub Models + local) | Install extension | Guided |
+| **Cerebras** | Free tier available | Install extension + API key | Manual — Cerebras extension does not activate reliably |
+| **OpenAI Compatible** | Varies | Install extension + endpoint config | Manual — OAICopilot extension has unresolved configuration issues |
 
-The built-in setup wizard walks you through each provider step by step.
+The built-in setup wizard walks you through each guided provider step by step. Manual providers work with VOQR but require independent configuration — VOQR will detect them automatically once set up.
 
 ## Requirements
 
@@ -52,7 +52,7 @@ The built-in setup wizard walks you through each provider step by step.
 | **STT** | whisper.cpp (auto-detected, or specify path in settings) |
 | **TTS** | Python 3.10–3.13 + Kokoro (auto-installed on first use) |
 
-VOQR auto-detects whisper.cpp and Python on your system. If they're not found, you'll be guided through setup.
+VOQR auto-detects whisper.cpp and Python on your system. If they're not found, you'll be prompted to configure the paths in settings.
 
 ## Keybindings
 
@@ -102,18 +102,19 @@ You speak → Mic capture → Voice activity detection (Silero VAD)
 |---|---|---|---|---|
 | Local STT | Yes | Yes | No (cloud) | Yes |
 | Local TTS | Yes | Limited | No | No |
-| Any AI provider | Yes | Copilot only | Any text field | Any text field |
-| VS Code native | Yes | Yes | No | No |
+| Any AI provider | Yes | Yes | Any text field | Any text field |
+| VS Code native | Yes | Yes | No (system-level) | No (system-level) |
 | Custom voice | Yes | No | No | No |
-| Offline capable | Yes | Yes | No | STT only |
-| Price | Free | Free | $15/mo | $8.49/mo |
+| Speaker ID | Coming Soon | No | No | No |
+| Offline capable | Yes | Yes | No | Yes (STT only) |
+| Price | Free | Free | Free / $15/mo | $8.49/mo |
 
-## Roadmap
+## What's Next
 
-See [ROADMAP.md](ROADMAP.md) for the full plan. Highlights:
+- **v0.4** — Zero-config: bundled STT and TTS, no external server setup required
+- **v1.0** — Pro features: speaker verification, custom voice blending, voice commands, audio + text sync with pause/resume
 
-- **v0.4** — Zero-config: bundled STT and TTS, no external dependencies
-- **v1.0** — Pro features: speaker verification, custom voice blending, voice commands for VS Code, audio + text sync with pause/resume
+Follow development at [github.com/InterGenJLU/voqr-public](https://github.com/InterGenJLU/voqr-public).
 
 ## Contributing
 

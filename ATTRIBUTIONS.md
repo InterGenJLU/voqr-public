@@ -14,6 +14,11 @@ VOQR is built on the shoulders of these open-source projects. Their licenses are
 - **Repository:** https://github.com/ggerganov/whisper.cpp
 - **Usage:** C++ inference engine for Whisper models. Runs as a local HTTP server for STT.
 
+### faster-whisper
+- **License:** MIT
+- **Repository:** https://github.com/SYSTRAN/faster-whisper
+- **Usage:** GPU-accelerated Whisper inference via CTranslate2 (Pro STT backend)
+
 ## Text-to-Speech
 
 ### Kokoro TTS
