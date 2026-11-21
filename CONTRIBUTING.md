@@ -6,7 +6,7 @@ Thank you for your interest in VOQR! We welcome bug reports, feature requests, v
 
 - [Bug Report](https://github.com/InterGenJLU/voqr-public/issues/new?template=bug_report.md)
 - [Feature Request](https://github.com/InterGenJLU/voqr-public/issues/new?template=feature_request.md)
-- [Voice Quality Report](https://github.com/InterGenJLU/voqr-public/issues/new?template=voice_quality.md)
+- [Voice Quality Report](https://github.com/InterGenJLU/voqr-public/issues/new?template=voice_quality.yml)
 
 Voice quality reports are especially valuable — if the AI's response sounds wrong, unnatural, or mispronounces a term, let us know. These directly improve the TTS normalizer for everyone.
 
@@ -18,6 +18,7 @@ Voice quality reports are especially valuable — if the AI's response sounds wr
 4. Press `F5` in VS Code to launch the Extension Development Host
 5. Run `npm test` to run the test suite (210 tests)
 6. Run `npm run lint` to check for lint errors
+7. Run `git config core.hooksPath .githooks` once per clone to turn on the commit checks in `.githooks/` (they need Python 3.8 or newer)
 
 ### Requirements
 

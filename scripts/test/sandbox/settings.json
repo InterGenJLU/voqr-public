@@ -1,0 +1,10 @@
+{
+  "telemetry.telemetryLevel": "off",
+  "update.mode": "none",
+  "extensions.autoUpdate": false,
+  "extensions.autoCheckUpdates": false,
+  "extensions.ignoreRecommendations": true,
+  "workbench.startupEditor": "none",
+  "workbench.enableExperiments": false,
+  "voqr.debug": true
+}

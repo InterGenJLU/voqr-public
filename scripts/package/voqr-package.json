@@ -1,0 +1,49 @@
+{
+  "comment": "What goes into the VOQR package, one package per platform. pack.py builds it; verify-vsix.py proves where every byte came from.",
+  "extensionRoot": ".",
+  "readme": {
+    "src": "README.md",
+    "linkBase": "https://github.com/InterGenJLU/voqr-public/blob/HEAD/",
+    "imageBase": "https://github.com/InterGenJLU/voqr-public/raw/HEAD/"
+  },
+  "files": [
+    {"src": "package.json"},
+    {"src": "CHANGELOG.md", "dst": "changelog.md"},
+    {"src": "LICENSE", "dst": "LICENSE.txt"},
+    {"src": "ATTRIBUTIONS.md"},
+    {"src": "icon.png"},
+    {"src": "demo.gif"},
+    {"src": "server/stt_server.py"},
+    {"src": "server/tts_diagnostics.py"},
+    {"src": "server/tts_normalizer.py"},
+    {"src": "server/tts_server.py"},
+    {"src": "licenses/README.md"},
+    {"src": "licenses/onnxruntime-LICENSE.txt"},
+    {"src": "licenses/onnxruntime-ThirdPartyNotices.txt"},
+    {"src": "licenses/portaudio-LICENSE.txt"},
+    {"src": "licenses/silero-vad-LICENSE.txt"},
+    {"src": "licenses/node-record-lpcm16-LICENSE.txt"},
+    {"src": "licenses/debug-LICENSE.txt"},
+    {"src": "licenses/ms-LICENSE.md"}
+  ],
+  "built": [
+    "dist/extension.js",
+    "dist/webview/main.js",
+    "dist/webview/style.css"
+  ],
+  "modulesNote": "Runtime modules that cannot be bundled: each loads native code or data files relative to its own folder. Patterns are matched against the path inside the module; * also crosses folders. Native files are taken for the --target platform only.",
+  "modules": [
+    {"name": "avr-vad", "exclude": ["silero_vad_v5.onnx", "silero_vad_legacy.onnx", "*.map", "*.d.ts"]},
+    {"name": "onnxruntime-node", "exclude": ["lib/*", "script/*", "*.map", "*.d.ts"],
+     "native": {"dir": "bin/napi-v6/{platform}/{arch}/", "all": "bin/*",
+                "omit": {"win32": ["DirectML.dll", "dxcompiler.dll", "dxil.dll"]}}},
+    {"name": "onnxruntime-common", "exclude": ["dist/esm/*", "lib/*", "*.map", "*.d.ts"]},
+    {"name": "@analyticsinmotion/micstream", "exclude": ["src/*", "examples/*", "types/*", "binding.gyp"],
+     "native": {"dir": "prebuilds/{platform}-{arch}/", "all": "prebuilds/*"}},
+    {"name": "node-gyp-build"}
+  ],
+  "redact": "scripts/publish/redact.conf",
+  "deny": "scripts/publish/verify_patterns.txt",
+  "denyExemptFile": "scripts/publish/deny-exempt.json",
+  "denyExemptNote": "The deny scan's exemptions (a pattern's key and the file names it is allowed in) are kept beside the pattern list, in a folder publish.sh never copies to the public repository, because a key of a short pattern can be recovered by guessing. pack.py and verify-vsix.py each refuse a config that carries exemptions itself, and each prints every exemption it applies."
+}

@@ -1,3 +1,6 @@
+# VOQR is not packaged with vsce. scripts/package/pack.py builds one package per platform
+# from the explicit list in scripts/package/voqr-package.json and does not read this file.
+# Packaging with vsce under these rules leaves out the runtime modules VOQR needs.
 .vscode/**
 .claude/**
 .pytest_cache/**
@@ -18,6 +21,8 @@ eslint.config.mjs
 HANDOFF.md
 ROADMAP.md
 VISION.md
+CONTRIBUTING.md
+scripts/**
 voqr-debug.log
 **/*.mkv
 **/*.vsix

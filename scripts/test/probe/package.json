@@ -1,0 +1,15 @@
+{
+  "name": "voqr-activation-probe",
+  "displayName": "VOQR activation probe (test only, never shipped)",
+  "description": "Used by scripts/test/activation-sandbox.ps1 to read VOQR's activation from inside a test editor.",
+  "version": "0.0.1",
+  "publisher": "voqr-test",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.99.0"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js"
+}

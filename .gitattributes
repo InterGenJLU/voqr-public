@@ -1,0 +1,2 @@
+# The commit hooks are sh scripts: they keep LF line endings on every platform.
+.githooks/* text eol=lf

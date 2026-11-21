@@ -81,11 +81,11 @@ const LM_PROVIDERS: LMProvider[] = [
         name: 'GitHub Copilot',
         extId: 'GitHub.copilot-chat',
         vendor: 'copilot',
-        hint: 'Sign in with GitHub — 50 free chats/mo',
+        hint: 'Sign in for 50 free chats/mo',
         tier: 'free',
         steps: [
             { type: 'install', title: 'Installing GitHub Copilot...' },
-            { type: 'info', title: 'Sign in to GitHub', description: 'Click "Use AI Features" in the VS Code status bar, then sign in with your GitHub account. The free tier includes 50 chat messages per month.' },
+            { type: 'info', title: 'Sign in to GitHub', description: 'Click the Copilot icon in the bottom-right status bar, then click "Enable more AI features." Sign in with GitHub, Google, or Apple when prompted. The free tier includes 50 chat messages per month.' },
             { type: 'wait', title: 'Waiting for models...' },
             { type: 'done', title: 'You\'re all set!' },
         ],

@@ -22,7 +22,7 @@ VOQR is built on the belief that voice interaction with AI should be private, ac
 
 ## Enforcement
 
-Unacceptable behavior can be reported to the project maintainer via [InterGen Studios](https://intergenstudios.com). All reports will be reviewed promptly and confidentially.
+Unacceptable behavior can be reported to the project maintainer by email to [info@intergenstudios.com](mailto:info@intergenstudios.com). All reports will be reviewed promptly and confidentially.
 
 ## Attribution
 

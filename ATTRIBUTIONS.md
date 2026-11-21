@@ -29,26 +29,43 @@ VOQR is built on the shoulders of these open-source projects. Their licenses are
 ## Voice Activity Detection
 
 ### Silero VAD
-- **License:** MIT
+- **License:** MIT (Copyright (c) 2020-present Silero Team)
 - **Repository:** https://github.com/snakers4/silero-vad
-- **Usage:** Voice activity detection model for speech segment identification
+- **Usage:** Voice activity detection model for speech segment identification. The model files ship inside avr-vad.
 
 ### avr-vad
-- **License:** MIT
-- **Repository:** https://github.com/nickarora/avr-vad
-- **Usage:** Node.js wrapper for Silero VAD used in the extension host
+- **License:** MIT (Copyright (c) 2025 Agent Voice Response)
+- **Repository:** https://github.com/agentvoiceresponse/avr-vad
+- **Usage:** Node.js wrapper for Silero VAD used in the extension host. Shipped in the package with its license file.
+
+### ONNX Runtime (onnxruntime-node, onnxruntime-common)
+- **License:** MIT (Copyright (c) Microsoft Corporation), with third-party notices for the components built into its binaries
+- **Website:** https://onnxruntime.ai
+- **Usage:** Runs the Silero VAD model. Its native library ships in the package for the package's platform; the license and notices travel in the package's licenses folder.
 
 ## Audio Capture
 
 ### @analyticsinmotion/micstream
-- **License:** MIT
-- **Repository:** https://github.com/nickarora/micstream
-- **Usage:** PortAudio-based microphone capture on Windows and macOS
+- **License:** Apache 2.0
+- **Repository:** https://github.com/analyticsinmotion/micstream
+- **Usage:** PortAudio-based microphone capture on Windows and macOS. Shipped in the package with its license file.
+
+### PortAudio
+- **License:** PortAudio license (Copyright (c) 1999-2006 Ross Bencina and Phil Burk)
+- **Website:** http://www.portaudio.com
+- **Usage:** Audio input library compiled into micstream's native module
+
+### node-gyp-build
+- **License:** MIT (Copyright (c) 2017 Mathias Buus)
+- **Repository:** https://github.com/prebuild/node-gyp-build
+- **Usage:** Loads micstream's prebuilt native module
 
 ### node-record-lpcm16
-- **License:** MIT
+- **License:** ISC (Copyright 2019 Gilles De Mey)
 - **Repository:** https://github.com/gillesdemey/node-record-lpcm16
-- **Usage:** arecord wrapper for microphone capture on Linux
+- **Usage:** arecord wrapper for microphone capture on Linux. Bundled into the extension together with debug (MIT, Copyright (c) 2014 TJ Holowaychuk) and ms (MIT, Copyright (c) 2016 Zeit, Inc.).
+
+The full license texts of the components above that the VOQR package carries are in the package's licenses folder.
 
 ## Python Dependencies (TTS Server)
 

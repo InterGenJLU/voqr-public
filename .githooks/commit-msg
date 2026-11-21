@@ -1,0 +1,11 @@
+#!/bin/sh
+# Git runs this on each commit message: it runs .githooks/checks.py (Python 3.8 or newer).
+# Setup, once per clone: git config core.hooksPath .githooks
+for py in python3 python; do
+    if "$py" -I -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' >/dev/null 2>&1; then
+        exec "$py" -I .githooks/checks.py commit-msg "$1"
+    fi
+done
+echo "commit-msg: FAIL: no Python 3.8 or newer was found as python3 or python; the commit was not made" >&2
+echo "  fix: install Python 3.8 or newer and put it on PATH, then commit again" >&2
+exit 1

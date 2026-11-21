@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { VoicePanel } from './panels/VoicePanel';
-import { AudioCapture } from './audio/AudioCapture';
+import { AudioCapture, loadVad, VcRuntimeMissingError, VC_REDIST_PAGE } from './audio/AudioCapture';
 import { SttServerManager } from './server/SttServerManager';
 import { TtsServerManager } from './server/TtsServerManager';
 import { ChatManager, ModelInfo } from './chat/ChatManager';
@@ -57,10 +57,18 @@ export function activate(context: vscode.ExtensionContext): void {
 
     try {
         debug('Testing avr-vad import...');
-        require('avr-vad');
+        loadVad();
         debug('avr-vad loaded ok');
     } catch (err) {
         error('Failed to load avr-vad', err);
+        if (err instanceof VcRuntimeMissingError) {
+            const open = 'Open download page';
+            vscode.window.showWarningMessage(`VOQR: ${err.message}`, open).then((choice) => {
+                if (choice === open) {
+                    vscode.env.openExternal(vscode.Uri.parse(VC_REDIST_PAGE));
+                }
+            });
+        }
     }
 
     // Read input mode from config

@@ -1,0 +1,12 @@
+{
+  "comment": "Packs the test-only probe extension with the same packer.",
+  "extensionRoot": "scripts/test/probe",
+  "files": [
+    {"src": "package.json"},
+    {"src": "extension.js"}
+  ],
+  "built": [],
+  "modules": [],
+  "deny": "scripts/publish/verify_patterns.txt",
+  "denyExempt": {}
+}

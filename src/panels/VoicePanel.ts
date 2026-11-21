@@ -36,6 +36,7 @@ export class VoicePanel {
             { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
             {
                 enableScripts: true,
+                retainContextWhenHidden: true,
                 localResourceRoots: [
                     vscode.Uri.joinPath(context.extensionUri, 'dist', 'webview'),
                 ],

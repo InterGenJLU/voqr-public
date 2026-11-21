@@ -2,7 +2,7 @@
   "name": "voqr",
   "displayName": "VOQR — Voice for AI Chat",
   "description": "Talk to any AI. Hear every answer. Local STT and TTS for every AI chat provider in VS Code.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "intergen",
   "license": "MIT",
   "icon": "icon.png",
@@ -148,7 +148,7 @@
     "lint": "eslint src/",
     "test:normalizer": "python3 -m pytest server/tests/test_normalizer.py -v",
     "test": "npm run test:normalizer",
-    "package": "vsce package"
+    "package": "python3 scripts/package/pack.py --config scripts/package/voqr-package.json"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

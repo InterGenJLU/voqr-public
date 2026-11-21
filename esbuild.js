@@ -20,10 +20,12 @@ const extensionConfig = {
     entryPoints: ['src/extension.ts'],
     bundle: true,
     outfile: 'dist/extension.js',
+    // Left out of the bundle because they load native code or data files relative to their
+    // own folder; scripts/package/voqr-package.json ships each of them under node_modules.
+    // Everything else, node-record-lpcm16 included, is bundled into dist/extension.js.
     external: [
         'vscode',
         '@analyticsinmotion/micstream',
-        'node-record-lpcm16',
         'onnxruntime-node',
         'avr-vad',
     ],

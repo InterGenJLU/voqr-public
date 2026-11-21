@@ -48,11 +48,14 @@ The built-in setup wizard walks you through each guided provider step by step. M
 | Component | Details |
 |-----------|---------|
 | **VS Code** | 1.99.0 or later |
-| **OS** | Linux, Windows, macOS |
+| **OS** | Windows (x64), Linux (x64, arm64), macOS (Apple silicon) |
 | **STT** | whisper.cpp (auto-detected, or specify path in settings) |
 | **TTS** | Python 3.10–3.13 + Kokoro (auto-installed on first use) |
+| **Windows** | Microsoft Visual C++ Redistributable (x64), for voice input — [download from Microsoft](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist) |
 
 VOQR auto-detects whisper.cpp and Python on your system. If they're not found, you'll be prompted to configure the paths in settings.
+
+On Windows, VOQR's voice-activity model runs on ONNX Runtime, which needs the Microsoft Visual C++ Redistributable (x64). If it is missing, VOQR says so when it starts and links to Microsoft's download page.
 
 ## Keybindings
 
@@ -122,7 +125,7 @@ VOQR is MIT licensed. Issues, feature requests, and voice quality reports welcom
 
 - [Bug Report](https://github.com/InterGenJLU/voqr-public/issues/new?template=bug_report.md)
 - [Feature Request](https://github.com/InterGenJLU/voqr-public/issues/new?template=feature_request.md)
-- [Voice Quality Report](https://github.com/InterGenJLU/voqr-public/issues/new?template=voice_quality.md)
+- [Voice Quality Report](https://github.com/InterGenJLU/voqr-public/issues/new?template=voice_quality.yml)
 
 ## License
 

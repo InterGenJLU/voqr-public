@@ -1,0 +1,57 @@
+name: Voice Quality Issue
+description: Something sounds wrong when VOQR speaks
+title: "[Voice] "
+labels: ["voice-quality"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Voice quality reports help us improve how VOQR speaks. Every report directly improves the TTS normalizer and pronunciation engine.
+
+  - type: textarea
+    id: what-was-said
+    attributes:
+      label: What did VOQR say?
+      description: The actual words/sounds you heard.
+      placeholder: VOQR said "strictly not equals" instead of...
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-should-sound-like
+    attributes:
+      label: What should it sound like?
+      description: How would you naturally say this?
+      placeholder: It should say "strictly does not equal"
+    validations:
+      required: true
+
+  - type: textarea
+    id: original-text
+    attributes:
+      label: Original text (if known)
+      description: The AI response text that was being read aloud. Copy from the chat panel if possible.
+
+  - type: dropdown
+    id: issue-type
+    attributes:
+      label: Type of issue
+      options:
+        - Mispronunciation (wrong word sound)
+        - Unnatural pacing (too fast, too slow, wrong pauses)
+        - Read literally (symbols, code, or formatting read as-is)
+        - Skipped content (something was silently dropped)
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - Linux
+        - Windows
+        - macOS
+    validations:
+      required: true

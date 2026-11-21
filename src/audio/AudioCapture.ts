@@ -1,6 +1,53 @@
 import * as vscode from 'vscode';
-import { RealTimeVAD } from 'avr-vad';
+import * as fs from 'fs';
+import * as path from 'path';
+import type { RealTimeVAD } from 'avr-vad';
 import { audio, vad, stt, perf, error } from '../log';
+
+/** Microsoft's download page for the Visual C++ Redistributable. */
+export const VC_REDIST_PAGE = 'https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist';
+
+// onnxruntime-node's Windows binaries import these Visual C++ runtime files, which the
+// redistributable installs in System32. A clean Windows does not have them.
+const VC_RUNTIME_FILES = ['msvcp140.dll', 'msvcp140_1.dll', 'vcruntime140.dll', 'vcruntime140_1.dll'];
+
+/** The Visual C++ runtime files missing from System32. Always empty outside Windows. */
+export function missingVcRuntime(): string[] {
+    if (process.platform !== 'win32') {
+        return [];
+    }
+    const system32 = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32');
+    return VC_RUNTIME_FILES.filter((name) => !fs.existsSync(path.join(system32, name)));
+}
+
+/** The voice-activity model could not load because the Visual C++ runtime is missing. */
+export class VcRuntimeMissingError extends Error {}
+
+/**
+ * Loads the voice-activity model's module. avr-vad loads onnxruntime's native code, so it is
+ * loaded on first use and never when the extension loads: a native module that cannot load
+ * must not stop activation. If the Visual C++ runtime is missing, the error says what to install.
+ */
+export function loadVad(): typeof RealTimeVAD {
+    try {
+        return (require('avr-vad') as typeof import('avr-vad')).RealTimeVAD;
+    } catch (err) {
+        // A native module whose own DLLs are missing fails to load with ERR_DLOPEN_FAILED; only
+        // then can the missing runtime files be the cause. Any other failure, such as a missing
+        // or wrong-platform binary (MODULE_NOT_FOUND), is passed on as it is.
+        const dlopenFailed = err instanceof Error && (err as NodeJS.ErrnoException).code === 'ERR_DLOPEN_FAILED';
+        const missing = dlopenFailed ? missingVcRuntime() : [];
+        if (missing.length > 0) {
+            throw new VcRuntimeMissingError(
+                'Voice input needs the Microsoft Visual C++ Redistributable (x64). ' +
+                `These files are missing from System32: ${missing.join(', ')}. ` +
+                `Download it from ${VC_REDIST_PAGE}, then reload the window.`,
+                { cause: err },
+            );
+        }
+        throw err;
+    }
+}
 
 // node-record-lpcm16 and micstream are CommonJS modules without types
  
@@ -51,7 +98,7 @@ export class AudioCapture {
             if (!this.vadInstance) {
                 perf.start('vad_init');
                 vad.info('Initializing Silero VAD...');
-                this.vadInstance = await RealTimeVAD.new({
+                this.vadInstance = await loadVad().new({
                     onSpeechStart: () => {
                         vad.debug('Speech start detected');
                         this.events.onStatusChange('Hearing speech...');
