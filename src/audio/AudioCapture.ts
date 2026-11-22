@@ -49,9 +49,17 @@ export function loadVad(): typeof RealTimeVAD {
     }
 }
 
-// node-record-lpcm16 and micstream are CommonJS modules without types
- 
-const record = require('node-record-lpcm16');
+/**
+ * The part of node-record-lpcm16 that VOQR uses. The module ships under node_modules in the Linux
+ * packages and is loaded when the microphone opens: it finds its recorder file relative to its
+ * own folder at run time, so it cannot be bundled into dist/extension.js.
+ */
+interface Lpcm16 {
+    record(options: { sampleRate: number; channels: number; recorder: string; audioType: string }): {
+        stream(): NodeJS.ReadableStream;
+        stop(): void;
+    };
+}
 
 interface AudioCaptureEvents {
     onSpeechStart: () => void;
@@ -59,6 +67,8 @@ interface AudioCaptureEvents {
     onTranscription: (text: string) => void;
     onError: (message: string) => void;
     onStatusChange: (status: string) => void;
+    /** The microphone stopped without being asked to (its stream failed or ended); onError has said why. */
+    onUnexpectedStop: () => void;
 }
 
 interface ActiveRecording {
@@ -166,20 +176,37 @@ export class AudioCapture {
                 }
             });
 
-            stream.on('error', (err: Error) => {
-                // When we intentionally stop the mic (e.g. TTS pause), killing
-                // the arecord process triggers a stream error. Don't alarm the user.
-                if (!this.active) {
+            // An error or an end of this stream while it is the live one is a stop nobody asked for: the
+            // microphone stops, and the extension is told, so that the panel and the status bar show it.
+            // After stop() (killing the arecord process, e.g. for the TTS pause, ends its stream with an
+            // error), or once a newer start has replaced this stream, its events are expected and only logged.
+            const isLive = (): boolean => this.active && this.recording?.stream === stream;
+
+            stream.on('error', (err: unknown) => {
+                if (!isLive()) {
                     audio.debug('Mic stream error after stop (expected)');
                     return;
                 }
                 audio.error('Mic stream error', err);
-                this.events.onError(`Microphone error: ${err?.message ?? 'unknown'}`);
+                // node-record-lpcm16 reports its recorder's exit as a string, not an Error.
+                const detail = err instanceof Error ? err.message : String(err ?? 'unknown').split('\n')[0];
+                this.events.onError(`Microphone error: ${detail}`);
                 this.stop();
+                this.events.onUnexpectedStop();
             });
 
-            stream.on('end', () => audio.debug('Mic stream ended'));
-            stream.on('close', () => audio.debug('Mic stream closed'));
+            const onStreamEnd = (what: string): void => {
+                if (!isLive()) {
+                    audio.debug(`Mic stream ${what}`);
+                    return;
+                }
+                audio.error(`Mic stream ${what} while listening`);
+                this.events.onError('The microphone stopped unexpectedly');
+                this.stop();
+                this.events.onUnexpectedStop();
+            };
+            stream.on('end', () => onStreamEnd('ended'));
+            stream.on('close', () => onStreamEnd('closed'));
 
             // Set active BEFORE audio starts flowing — data handler checks this flag
             this.active = true;
@@ -230,7 +257,8 @@ export class AudioCapture {
         if (platform === 'linux') {
             // Linux: arecord subprocess (proven stable; micstream segfaults on Linux)
             audio.info('Mic backend: arecord subprocess (linux, 16kHz mono S16_LE)');
-            const rec = record.record({
+            const lpcm16 = require('node-record-lpcm16') as Lpcm16;
+            const rec = lpcm16.record({
                 sampleRate: 16000,
                 channels: 1,
                 recorder: 'arecord',

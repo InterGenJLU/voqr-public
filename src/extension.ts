@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import { VoicePanel } from './panels/VoicePanel';
 import { AudioCapture, loadVad, VcRuntimeMissingError, VC_REDIST_PAGE } from './audio/AudioCapture';
 import { SttServerManager } from './server/SttServerManager';
@@ -12,6 +14,31 @@ let ttsServer: TtsServerManager | null = null;
 let chatManager: ChatManager | null = null;
 let inputMode: 'pushToTalk' | 'voiceActivity' = 'pushToTalk';
 let statusBarItem: vscode.StatusBarItem;
+/** Why this package has no voice input, or null when it has. */
+let noVoiceInput: string | null = null;
+/** True while a microphone start is under way, so a second click does not start it twice. */
+let captureStarting = false;
+
+/**
+ * The packager writes voice-input.json into a package built without voice input (the
+ * "withoutVoiceInput" targets of scripts/package/voqr-package.json), with the reason. A package
+ * with voice input has no such file, so a voice module that fails to load there is reported as
+ * the error it is, never as a platform without voice input.
+ */
+function readNoVoiceInput(extensionPath: string): string | null {
+    const file = path.join(extensionPath, 'voice-input.json');
+    if (!fs.existsSync(file)) {
+        return null;
+    }
+    const fallback = 'Voice input is not available in this package of VOQR.';
+    try {
+        const data = JSON.parse(fs.readFileSync(file, 'utf8')) as { reason?: unknown };
+        return typeof data.reason === 'string' && data.reason ? data.reason : fallback;
+    } catch (err) {
+        error('voice-input.json could not be read', err);
+        return fallback;
+    }
+}
 
 function updateStatusBar(state: 'idle' | 'listening' | 'speaking'): void {
     if (!statusBarItem) {return;}
@@ -34,6 +61,38 @@ function updateStatusBar(state: 'idle' | 'listening' | 'speaking'): void {
     }
 }
 
+/**
+ * Starts the microphone, then tells the panel and the status bar only the state it reached:
+ * listening once the microphone is open, idle when it could not start. AudioCapture has already
+ * shown the person why it could not.
+ */
+async function startCaptureAndReport(): Promise<void> {
+    if (captureStarting) {
+        debug('Microphone start already under way');
+        return;
+    }
+    captureStarting = true;
+    try {
+        await audioCapture?.start();
+    } catch (err) {
+        error('Audio capture start failed', err);
+    } finally {
+        captureStarting = false;
+    }
+    reportCaptureState();
+}
+
+/** Tells the panel and the status bar the state the microphone is in, read from AudioCapture. */
+function reportCaptureState(): void {
+    if (audioCapture?.isActive) {
+        VoicePanel.sendMessage({ type: 'captureStarted' });
+        updateStatusBar('listening');
+    } else {
+        VoicePanel.sendMessage({ type: 'captureStopped' });
+        updateStatusBar('idle');
+    }
+}
+
 export function activate(context: vscode.ExtensionContext): void {
     const outputChannel = initLog();
 
@@ -42,32 +101,43 @@ export function activate(context: vscode.ExtensionContext): void {
     logEnvironment();
     logConfig();
 
-    try {
-        const MicStream = require('@analyticsinmotion/micstream');
-        const ver = MicStream.version();
-        log(`micstream ${ver.micstream} loaded (${ver.portaudio})`);
-        const devices = MicStream.devices();
-        log(`PortAudio input devices: ${devices.length}`);
-        for (const d of devices) {
-            log(`  [${d.index}] ${d.name} (${d.maxInputChannels}ch @ ${d.defaultSampleRate}Hz${d.isDefault ? ' — DEFAULT' : ''})`);
-        }
-    } catch (err) {
-        error('Failed to load micstream', err);
+    noVoiceInput = readNoVoiceInput(context.extensionPath);
+    if (noVoiceInput) {
+        log(`No voice input in this package: ${noVoiceInput}`);
     }
 
-    try {
-        debug('Testing avr-vad import...');
-        loadVad();
-        debug('avr-vad loaded ok');
-    } catch (err) {
-        error('Failed to load avr-vad', err);
-        if (err instanceof VcRuntimeMissingError) {
-            const open = 'Open download page';
-            vscode.window.showWarningMessage(`VOQR: ${err.message}`, open).then((choice) => {
-                if (choice === open) {
-                    vscode.env.openExternal(vscode.Uri.parse(VC_REDIST_PAGE));
-                }
-            });
+    // micstream opens the microphone on Windows and macOS only. On Linux arecord does, and the
+    // Linux packages carry no micstream, which AudioCapture's notes say crashes there.
+    if (!noVoiceInput && process.platform !== 'linux') {
+        try {
+            const MicStream = require('@analyticsinmotion/micstream');
+            const ver = MicStream.version();
+            log(`micstream ${ver.micstream} loaded (${ver.portaudio})`);
+            const devices = MicStream.devices();
+            log(`PortAudio input devices: ${devices.length}`);
+            for (const d of devices) {
+                log(`  [${d.index}] ${d.name} (${d.maxInputChannels}ch @ ${d.defaultSampleRate}Hz${d.isDefault ? ' — DEFAULT' : ''})`);
+            }
+        } catch (err) {
+            error('Failed to load micstream', err);
+        }
+    }
+
+    if (!noVoiceInput) {
+        try {
+            debug('Testing avr-vad import...');
+            loadVad();
+            debug('avr-vad loaded ok');
+        } catch (err) {
+            error('Failed to load avr-vad', err);
+            if (err instanceof VcRuntimeMissingError) {
+                const open = 'Open download page';
+                vscode.window.showWarningMessage(`VOQR: ${err.message}`, open).then((choice) => {
+                    if (choice === open) {
+                        vscode.env.openExternal(vscode.Uri.parse(VC_REDIST_PAGE));
+                    }
+                });
+            }
         }
     }
 
@@ -111,25 +181,29 @@ export function activate(context: vscode.ExtensionContext): void {
         },
     });
 
-    // Start TTS server
-    ttsServer = new TtsServerManager();
-    ttsServer.start().then(() => {
-        if (ttsServer?.isReady) {
-            log(`TTS server ready at ${ttsServer.serverUrl}`);
-        }
-    }).catch((err) => {
-        error('TTS server startup failed — voice output unavailable', err);
-    });
+    // The speech servers start only where voice input exists: VOQR's only input is the voice, so
+    // without it nothing could reach them, and the TTS server would install Kokoro for nothing.
+    if (!noVoiceInput) {
+        // Start TTS server
+        ttsServer = new TtsServerManager(context.extensionPath);
+        ttsServer.start().then(() => {
+            if (ttsServer?.isReady) {
+                log(`TTS server ready at ${ttsServer.serverUrl}`);
+            }
+        }).catch((err) => {
+            error('TTS server startup failed — voice output unavailable', err);
+        });
 
-    // Start STT server
-    sttServer = new SttServerManager();
-    sttServer.start().then(() => {
-        if (sttServer?.isReady) {
-            log(`STT server ready at ${sttServer.serverUrl}`);
-        }
-    }).catch((err) => {
-        error('STT server startup failed', err);
-    });
+        // Start STT server
+        sttServer = new SttServerManager(context.extensionPath);
+        sttServer.start().then(() => {
+            if (sttServer?.isReady) {
+                log(`STT server ready at ${sttServer.serverUrl}`);
+            }
+        }).catch((err) => {
+            error('STT server startup failed', err);
+        });
+    }
 
     const toggleCmd = vscode.commands.registerCommand('voqr.toggleVoicePanel', () => {
         debug('Command: toggleVoicePanel');
@@ -140,6 +214,11 @@ export function activate(context: vscode.ExtensionContext): void {
 
     const pttCmd = vscode.commands.registerCommand('voqr.pushToTalk', () => {
         debug('Command: pushToTalk');
+        if (noVoiceInput) {
+            log('Push-to-talk: no voice input in this package');
+            vscode.window.showWarningMessage(`VOQR: ${noVoiceInput}`);
+            return;
+        }
         VoicePanel.createOrShow(context);
         syncSettingsToWebview();
         chatManager?.refreshModelList();
@@ -175,9 +254,7 @@ export function activate(context: vscode.ExtensionContext): void {
         // If switching to hands-free and mic isn't active, start it
         if (inputMode === 'voiceActivity' && audioCapture && !audioCapture.isActive) {
             log('Hands-free: auto-starting mic');
-            audioCapture.start();
-            VoicePanel.sendMessage({ type: 'captureStarted' });
-            updateStatusBar('listening');
+            void startCaptureAndReport();
         }
         // If switching to PTT, stop mic (user will manually start)
         if (inputMode === 'pushToTalk' && audioCapture?.isActive) {
@@ -203,7 +280,9 @@ export function activate(context: vscode.ExtensionContext): void {
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusBarItem.command = 'voqr.pushToTalk';
     statusBarItem.text = '$(mic) VOQR';
-    statusBarItem.tooltip = 'VOQR: Click to start voice input';
+    statusBarItem.tooltip = noVoiceInput
+        ? 'VOQR: Voice input is not available in this package. Click for the reason.'
+        : 'VOQR: Click to start voice input';
     statusBarItem.show();
 
     context.subscriptions.push(toggleCmd, pttCmd, selectModelCmd, refreshModelsCmd, toggleModeCmd, clearTtsCmd, wizardReloadCmd, statusBarItem, outputChannel);
@@ -273,6 +352,9 @@ async function toggleAudioCapture(): Promise<void> {
             onStatusChange: (status: string) => {
                 VoicePanel.sendMessage({ type: 'status', payload: status });
             },
+            onUnexpectedStop: () => {
+                reportCaptureState();
+            },
         }, sttServer?.transcribeUrl);
     }
 
@@ -283,9 +365,7 @@ async function toggleAudioCapture(): Promise<void> {
         updateStatusBar('idle');
     } else {
         log('Starting audio capture');
-        audioCapture.start();
-        VoicePanel.sendMessage({ type: 'captureStarted' });
-        updateStatusBar('listening');
+        await startCaptureAndReport();
     }
 }
 
@@ -304,7 +384,8 @@ function syncSettingsToWebview(): void {
     const voqrConfig = vscode.workspace.getConfiguration('voqr');
     const speed = voqrConfig.get<number>('ttsSpeed', 1.0);
     const muted = !voqrConfig.get<boolean>('ttsAutoPlay', true);
-    VoicePanel.sendMessage({ type: 'syncSettings', payload: { speed, muted, platform: process.platform } });
+    // voiceInput: why this package has no voice input, so the panel can say so; null when it has.
+    VoicePanel.sendMessage({ type: 'syncSettings', payload: { speed, muted, platform: process.platform, voiceInput: noVoiceInput } });
     debug(`Settings synced to webview: speed=${speed}, muted=${muted}, platform=${process.platform}`);
 }
 
@@ -315,13 +396,14 @@ function clearSentenceQueue(): void {
     if (micPausedForTts) {
         micPausedForTts = false;
         if (inputMode === 'voiceActivity') {
-            audioCapture?.start();
-            VoicePanel.sendMessage({ type: 'captureStarted' });
-            VoicePanel.sendMessage({ type: 'status', payload: 'Listening...' });
-            updateStatusBar('listening');
+            // AudioCapture reports "Listening..." itself, or why the microphone could not start.
+            void startCaptureAndReport();
         } else {
-            VoicePanel.sendMessage({ type: 'status', payload: 'Ready' });
-            updateStatusBar('idle');
+            // Push to talk: the person may have started the microphone during the speech.
+            if (!audioCapture?.isActive) {
+                VoicePanel.sendMessage({ type: 'status', payload: 'Ready' });
+            }
+            reportCaptureState();
         }
     }
 }
@@ -354,6 +436,10 @@ function enqueueSentence(sentence: string): void {
             log('TTS: pausing mic for streaming playback');
             audioCapture?.stop();
             VoicePanel.sendMessage({ type: 'status', payload: 'Speaking...' });
+            if (inputMode !== 'voiceActivity') {
+                // Push to talk: the microphone does not resume after the speech, so the panel is told now.
+                VoicePanel.sendMessage({ type: 'captureStopped' });
+            }
             micPausedForTts = true;
             updateStatusBar('speaking');
         }
@@ -381,14 +467,15 @@ async function processSentenceQueue(): Promise<void> {
         micPausedForTts = false;
         if (inputMode === 'voiceActivity') {
             log('TTS: all sentences played — resuming mic');
-            audioCapture?.start();
-            VoicePanel.sendMessage({ type: 'captureStarted' });
-            VoicePanel.sendMessage({ type: 'status', payload: 'Listening...' });
-            updateStatusBar('listening');
+            // AudioCapture reports "Listening..." itself, or why the microphone could not start.
+            void startCaptureAndReport();
         } else {
-            log('TTS: all sentences played — PTT mode, returning to idle');
-            VoicePanel.sendMessage({ type: 'status', payload: 'Ready' });
-            updateStatusBar('idle');
+            log('TTS: all sentences played — PTT mode');
+            // The person may have started the microphone during the speech: report the state it is in.
+            if (!audioCapture?.isActive) {
+                VoicePanel.sendMessage({ type: 'status', payload: 'Ready' });
+            }
+            reportCaptureState();
         }
     }
 }

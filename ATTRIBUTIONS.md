@@ -36,19 +36,19 @@ VOQR is built on the shoulders of these open-source projects. Their licenses are
 ### avr-vad
 - **License:** MIT (Copyright (c) 2025 Agent Voice Response)
 - **Repository:** https://github.com/agentvoiceresponse/avr-vad
-- **Usage:** Node.js wrapper for Silero VAD used in the extension host. Shipped in the package with its license file.
+- **Usage:** Node.js wrapper for Silero VAD used in the extension host. Shipped with its license file in the packages that have voice input: Windows x64, Linux x64 and arm64, and macOS on Apple silicon.
 
 ### ONNX Runtime (onnxruntime-node, onnxruntime-common)
 - **License:** MIT (Copyright (c) Microsoft Corporation), with third-party notices for the components built into its binaries
 - **Website:** https://onnxruntime.ai
-- **Usage:** Runs the Silero VAD model. Its native library ships in the package for the package's platform; the license and notices travel in the package's licenses folder.
+- **Usage:** Runs the Silero VAD model. In the packages that have voice input, its native library ships for the package's platform, and the license and notices travel in the package's licenses folder.
 
 ## Audio Capture
 
 ### @analyticsinmotion/micstream
 - **License:** Apache 2.0
 - **Repository:** https://github.com/analyticsinmotion/micstream
-- **Usage:** PortAudio-based microphone capture on Windows and macOS. Shipped in the package with its license file.
+- **Usage:** PortAudio-based microphone capture on Windows x64 and on macOS on Apple silicon. Shipped in those two packages with its license file.
 
 ### PortAudio
 - **License:** PortAudio license (Copyright (c) 1999-2006 Ross Bencina and Phil Burk)
@@ -63,9 +63,9 @@ VOQR is built on the shoulders of these open-source projects. Their licenses are
 ### node-record-lpcm16
 - **License:** ISC (Copyright 2019 Gilles De Mey)
 - **Repository:** https://github.com/gillesdemey/node-record-lpcm16
-- **Usage:** arecord wrapper for microphone capture on Linux. Bundled into the extension together with debug (MIT, Copyright (c) 2014 TJ Holowaychuk) and ms (MIT, Copyright (c) 2016 Zeit, Inc.).
+- **Usage:** arecord wrapper for microphone capture on Linux. Shipped in the Linux x64 and arm64 packages with its license file, together with debug (MIT, Copyright (c) 2014 TJ Holowaychuk) and ms (MIT, Copyright (c) 2016 Zeit, Inc.), which ship with theirs.
 
-The full license texts of the components above that the VOQR package carries are in the package's licenses folder.
+The full license texts of the components above that a VOQR package carries are in the package's licenses folder or in the component's own folder under node_modules.
 
 ## Python Dependencies (TTS Server)
 

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { ChildProcess, spawn } from 'child_process';
 import { existsSync } from 'fs';
 import * as net from 'net';
+import * as path from 'path';
 import { log, debug, error, perf } from '../log';
 
 export class TtsServerManager {
@@ -11,7 +12,8 @@ export class TtsServerManager {
     private restartCount = 0;
     private maxRestarts = 3;
 
-    constructor() {
+    /** extensionPath: the extension's own folder, the only place its server script is looked for. */
+    constructor(private readonly extensionPath: string) {
         const config = vscode.workspace.getConfiguration('voqr');
         const urlStr = config.get<string>('ttsServerUrl', 'http://127.0.0.1:8100');
         try {
@@ -185,19 +187,14 @@ export class TtsServerManager {
     }
 
     private resolveScript(): string | null {
-        const candidates = [
-            `${vscode.extensions.getExtension('intergen.voqr')?.extensionPath ?? '.'}/server/tts_server.py`,
-            `${process.cwd()}/server/tts_server.py`,
-            `${__dirname}/../../server/tts_server.py`,
-        ];
-
-        for (const candidate of candidates) {
-            if (existsSync(candidate)) {
-                debug(`TTS: script found at ${candidate}`);
-                return candidate;
-            }
+        // Only the extension's own folder: a script found anywhere else (the working directory, a
+        // folder beside the extension) would be code this package did not ship.
+        const script = path.join(this.extensionPath, 'server', 'tts_server.py');
+        if (existsSync(script)) {
+            debug(`TTS: script found at ${script}`);
+            return script;
         }
-
+        log(`TTS: script not found at ${script}`);
         return null;
     }
 

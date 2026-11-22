@@ -7,6 +7,9 @@ What goes into the package, and from where:
   * "built": build outputs named one by one (for example dist/extension.js);
   * "modules": runtime npm modules copied from node_modules. A module's native parts
     are taken for the requested --target platform only.
+A file or a module that names "targets" ships only in the packages of those targets; the
+output lists what was left out of the package for its target. For a target named in
+"withoutVoiceInput", the package also gets voice-input.json, which holds the reason.
 Project text files pass through the redaction rules ("redact"), and the manifest
 (extension.vsixmanifest) is written from the redacted package.json.
 Before anything is written, every member of the package, the manifest and
@@ -41,9 +44,14 @@ import zipfile
 import zlib
 from xml.sax.saxutils import escape
 
+# Each VS Code target, with the platform and arch names a module's native folder is found by.
+# Alpine's platform name is 'alpine', which no module's native folder uses: the Linux builds those
+# modules carry need glibc, which Alpine does not use, so a module given native parts for an Alpine
+# target stops the build instead of shipping them.
 TARGETS = {
     'win32-x64': ('win32', 'x64'), 'win32-arm64': ('win32', 'arm64'),
-    'linux-x64': ('linux', 'x64'), 'linux-arm64': ('linux', 'arm64'),
+    'linux-x64': ('linux', 'x64'), 'linux-arm64': ('linux', 'arm64'), 'linux-armhf': ('linux', 'arm'),
+    'alpine-x64': ('alpine', 'x64'), 'alpine-arm64': ('alpine', 'arm64'),
     'darwin-x64': ('darwin', 'x64'), 'darwin-arm64': ('darwin', 'arm64'),
 }
 # Same set publish.sh treats as text, plus source maps.
@@ -308,6 +316,25 @@ def content_types_xml(names):
             f'content-types">{body}</Types>').encode('utf-8')
 
 
+def for_target(entry, what, target):
+    """True when a file or module entry ships in the package for target. An entry that names
+    "targets" needs --target, and each target it names must be one this packer knows."""
+    targets = entry.get('targets')
+    if targets is None:
+        return True
+    unknown = sorted(set(targets) - set(TARGETS))
+    if unknown or not targets:
+        fail(f'{what}: "targets" must name targets from {sorted(TARGETS)}; it names {targets}')
+    if not target:
+        fail(f'{what} ships per target: give --target')
+    return target in targets
+
+
+def voice_input_json(reason):
+    """The bytes of voice-input.json; verify-vsix.py builds the same bytes to compare."""
+    return (json.dumps({'available': False, 'reason': reason}, indent=1) + '\n').encode('utf-8')
+
+
 def module_files(repo, root, mod, target):
     base = os.path.join(repo, root, 'node_modules', *mod['name'].split('/'))
     if not os.path.isdir(base):
@@ -380,7 +407,11 @@ def build():
         r = cfg['readme']
         data = rewrite_readme(tracked(r['src']), r['linkBase'], r['imageBase'])
         add('extension/readme.md', redact(data, rules), f'git {r["src"]} (links made absolute, redacted)')
+    left_out = []
     for f in cfg.get('files', []):
+        if not for_target(f, f'file {f["src"]}', a.target):
+            left_out.append(f'file {f["src"]}')
+            continue
         dst = f.get('dst', f['src'])
         data = tracked(f['src'])
         if is_text(dst):
@@ -395,8 +426,17 @@ def build():
         data = open(p, 'rb').read()
         add(f'extension/{b}', redact(data, rules) if is_text(b) else data, f'build {b}' + (' (redacted)' if is_text(b) else ''))
     for mod in cfg.get('modules', []):
+        if not for_target(mod, f'module {mod["name"]}', a.target):
+            left_out.append(f'module {mod["name"]}')
+            continue
         for rel, path in module_files(repo, root, mod, a.target):
             add(f'extension/node_modules/{mod["name"]}/{rel}', open(path, 'rb').read(), f'module {mod["name"]}')
+
+    without = cfg.get('withoutVoiceInput', {})
+    if set(without) - set(TARGETS):
+        fail(f'withoutVoiceInput names unknown targets: {sorted(set(without) - set(TARGETS))}')
+    if a.target in without:
+        add('extension/voice-input.json', voice_input_json(without[a.target]), 'generated from withoutVoiceInput')
 
     # The manifest describes the package.json that ships, so it is written from the redacted copy.
     if 'extension/package.json' not in members:
@@ -415,6 +455,7 @@ def build():
         applied += [(name, k, n, labels) for k, (n, labels) in sorted(exempted.items())]
     if hits:
         fail('deny patterns found, nothing written:\n' + '\n'.join(f'  {place}: pattern {k}' for place, k in hits))
+    say(f'left out for target {a.target or "none"}: ' + (', '.join(left_out) if left_out else 'nothing'))
     say(f'redaction: {len(rules)} rule(s) from {cfg["redact"]}' if redact_path else f'redaction: NOT RUN: {redact_why}')
     if deny:
         say(f'deny scan: {len(_deny.plain)} patterns, all {len(names)} members (each name, and its bytes as UTF-8 and '

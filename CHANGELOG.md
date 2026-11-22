@@ -6,6 +6,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-22
+
+### Added
+- Packages for Intel Macs (darwin-x64), Windows on Arm (win32-arm64), 32-bit Arm Linux (linux-armhf) and Alpine Linux (alpine-x64, alpine-arm64), so those systems no longer get 0.2.0, which cannot start. They have no voice input: micstream 0.4.0, which opens the microphone on Windows and macOS, has no build for Windows on Arm or Intel Macs, and ONNX Runtime 1.24.3, which runs the voice-activity model, has none for Intel Macs or 32-bit Arm, and its Linux builds need glibc, which Alpine Linux does not use. VOQR starts there, starts no speech server, and says why when the mic button is pressed
+
+### Fixed
+- Linux: push to talk no longer fails with "No such recorder found: arecord". 0.2.1 bundled node-record-lpcm16 into the extension, and that module looks for its recorder file beside itself, which the bundle moved away from. It now ships under node_modules in the Linux x64 and arm64 packages, together with debug and ms, and loads when the microphone opens
+- The panel and the status bar show only the capture state VOQR is in. Since 0.2.0 they could say VOQR was listening when it was not: after a microphone that could not start (no Visual C++ runtime, no arecord, a device error), after a microphone error or a microphone stream that ended by itself, and in push to talk after VOQR spoke its answer; when the answer ended, the status bar could also say idle while a microphone started during the answer was listening. The "say hi" prompt now appears once the microphone is open, not when the button is pressed, and goes when the microphone stops
+- A microphone error on Linux names the recorder's exit (for example "arecord has exited with error code 1") instead of "unknown"
+- The panel writes the chat model's name and the setup wizard's error messages as text, so markup in them is shown as written instead of becoming part of the page
+
+### Changed
+- Linux: the packages no longer carry micstream, and VOQR no longer loads it at start-up there. arecord opens the microphone on Linux; micstream, which VOQR's own notes say crashes on Linux, was loaded only to log its devices
+
+### Security
+- VOQR looks for its Python server scripts in its own folder only. 0.2.1 would also have run a script named like them from the working directory, or from the folder that holds every extension, if its own copy were missing, which no package lacks
+
 ## [0.2.1] - 2026-11-21
 
 ### Fixed

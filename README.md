@@ -48,14 +48,16 @@ The built-in setup wizard walks you through each guided provider step by step. M
 | Component | Details |
 |-----------|---------|
 | **VS Code** | 1.99.0 or later |
-| **OS** | Windows (x64), Linux (x64, arm64), macOS (Apple silicon) |
+| **OS** | Windows (x64, arm64), Linux (x64, arm64, armhf), Alpine Linux (x64, arm64), macOS (Intel, Apple silicon) |
+| **Voice input** | Windows (x64), Linux (x64, arm64), macOS (Apple silicon). On Windows on Arm, Intel Macs, 32-bit Arm Linux and Alpine Linux, VOQR installs and starts, and the mic button says why voice input is not available there: the module that opens the microphone has no build for Windows on Arm or Intel Macs, and the voice-activity runtime has none for Intel Macs, 32-bit Arm or Alpine Linux |
 | **STT** | whisper.cpp (auto-detected, or specify path in settings) |
 | **TTS** | Python 3.10–3.13 + Kokoro (auto-installed on first use) |
+| **Linux** | arecord, from alsa-utils, for voice input |
 | **Windows** | Microsoft Visual C++ Redistributable (x64), for voice input — [download from Microsoft](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist) |
 
 VOQR auto-detects whisper.cpp and Python on your system. If they're not found, you'll be prompted to configure the paths in settings.
 
-On Windows, VOQR's voice-activity model runs on ONNX Runtime, which needs the Microsoft Visual C++ Redistributable (x64). If it is missing, VOQR says so when it starts and links to Microsoft's download page.
+On Windows x64, VOQR's voice-activity model runs on ONNX Runtime, which needs the Microsoft Visual C++ Redistributable (x64). If it is missing, VOQR says so when it starts and links to Microsoft's download page.
 
 ## Keybindings
 

@@ -31,7 +31,11 @@ const modeLabelPTT = document.getElementById('mode-label-ptt') as HTMLLabelEleme
 
 let active = false;
 let started = false;
+/** The first click asked for the "say hi" prompt; it is shown once the microphone is open (captureStarted). */
+let readyPromptPending = false;
 let hasModel = false;
+/** Why this package has no voice input (sent by the extension), or null when it has voice input. */
+let voiceInputReason: string | null = null;
 let currentAssistantEl: HTMLDivElement | null = null;
 let currentModelName = 'AI';
 let currentVendor = '';
@@ -236,6 +240,14 @@ function getVendorColor(vendor: string): string {
 // ── Main button (Start / Mic / Stop) ─────────────────────────────────
 
 mainBtn.addEventListener('click', () => {
+    if (voiceInputReason) {
+        // No voice input in this package: say why, and never claim that a mode is enabled.
+        // The extension shows the same reason as a notification.
+        showNoVoiceInput(voiceInputReason);
+        vsCodeApi.postMessage({ type: 'toggleCapture' });
+        return;
+    }
+
     // Create/resume AudioContext on user gesture — required by autoplay policy
     if (!audioContext) {
         audioContext = new AudioContext();
@@ -252,8 +264,8 @@ mainBtn.addEventListener('click', () => {
         mainLabel.classList.add('active-indicator');
         mainLabel.textContent = currentInputMode === 'voiceActivity'
             ? 'Hands-free enabled' : 'Push to talk enabled';
-        // Replace watermark with prompt
-        showReadyPrompt();
+        // The "say hi" prompt replaces the watermark once the extension reports the microphone open.
+        readyPromptPending = true;
     }
 
     vsCodeApi.postMessage({ type: 'toggleCapture' });
@@ -714,10 +726,20 @@ function showReadyPrompt(): void {
     const friendlyName = getFriendlyModelName(currentModelName);
     const prompt = document.createElement('div');
     prompt.className = 'ready-prompt';
-    prompt.innerHTML = `
-        <div class="ready-prompt-text">Go ahead,</div>
-        <div class="ready-prompt-text">say <span class="ready-prompt-hi">"hi"</span> to <span class="ready-prompt-model">${friendlyName}</span>...</div>
-    `;
+    // The model's name comes from outside the page, so it is written as text, never as markup.
+    const first = document.createElement('div');
+    first.className = 'ready-prompt-text';
+    first.textContent = 'Go ahead,';
+    const hi = document.createElement('span');
+    hi.className = 'ready-prompt-hi';
+    hi.textContent = '"hi"';
+    const model = document.createElement('span');
+    model.className = 'ready-prompt-model';
+    model.textContent = friendlyName;
+    const second = document.createElement('div');
+    second.className = 'ready-prompt-text';
+    second.append('say ', hi, ' to ', model, '...');
+    prompt.append(first, second);
     chatEl.appendChild(prompt);
 }
 
@@ -1013,7 +1035,14 @@ function onWizardError(message: string): void {
     if (stepEl) {
         stepEl.classList.remove('installing', 'waiting');
         stepEl.classList.add('done'); // reuse red-ish styling below
-        stepEl.innerHTML = `<span class="wizard-step-icon">\u{274C}</span><span style="color: var(--error, #d32f2f)">${message}</span>`;
+        // The message comes from outside the page, so it is written as text, never as markup.
+        const icon = document.createElement('span');
+        icon.className = 'wizard-step-icon';
+        icon.textContent = '\u{274C}';
+        const text = document.createElement('span');
+        text.setAttribute('style', 'color: var(--error, #d32f2f)');
+        text.textContent = message;
+        stepEl.replaceChildren(icon, text);
     }
     // Replace actions with cancel-only
     const actions = document.querySelector('.wizard-actions');
@@ -1104,12 +1133,27 @@ function hideOnboarding(): void {
     }
 }
 
+/** A package without voice input: the panel says so and why, and offers no mode and no prompt to speak. */
+function showNoVoiceInput(reason: string): void {
+    voiceInputReason = reason;
+    hideModePrompt();
+    hideModelPrompt();
+    hideReadyPrompt();
+    modeToggleArea.classList.add('hidden');
+    mainLabel.textContent = 'Voice input not available';
+    statusEl.textContent = reason;
+}
+
 function showModelPrompt(): void {
     // Disable main button until model is selected
     mainBtn.disabled = true;
     mainBtn.classList.add('disabled');
     modeToggleArea.classList.add('hidden');
     mainLabel.textContent = '';
+    if (voiceInputReason) {
+        showNoVoiceInput(voiceInputReason);
+        return;
+    }
 
     // Show prompt arrow pointing to the dropdown
     if (document.getElementById('model-prompt')) {
@@ -1140,6 +1184,10 @@ function enableMain(): void {
     mainBtn.classList.remove('disabled');
     mainBtnIcon.textContent = 'GO';
     mainLabel.textContent = '';
+    if (voiceInputReason) {
+        showNoVoiceInput(voiceInputReason);
+        return;
+    }
 
     // Show mode toggle and mode prompt
     modeToggleArea.classList.remove('hidden');
@@ -1208,7 +1256,7 @@ window.addEventListener('message', (event: MessageEvent<{ type: string; payload?
             break;
         }
         case 'syncSettings': {
-            const settings = msg.payload as { speed: number; muted: boolean; platform?: string };
+            const settings = msg.payload as { speed: number; muted: boolean; platform?: string; voiceInput?: string | null };
             if (settings) {
                 ttsSpeed = settings.speed;
                 ttsSpeedValue.textContent = `${ttsSpeed.toFixed(1)}x`;
@@ -1216,6 +1264,7 @@ window.addEventListener('message', (event: MessageEvent<{ type: string; payload?
                 ttsMuteIcon.textContent = ttsMuted ? '\u{1F507}' : '\u{1F50A}';
                 ttsMuteBtn.classList.toggle('muted', ttsMuted);
                 if (settings.platform) { platformId = settings.platform; }
+                if (settings.voiceInput) { showNoVoiceInput(settings.voiceInput); }
             }
             break;
         }
@@ -1257,11 +1306,17 @@ window.addEventListener('message', (event: MessageEvent<{ type: string; payload?
                 mainBtnIcon.textContent = '\u{1F3A4}'; // mic
                 mainLabel.textContent = 'Push to talk enabled';
             }
+            if (readyPromptPending) {
+                readyPromptPending = false;
+                showReadyPrompt();
+            }
             break;
         }
         case 'captureStopped': {
             active = false;
             mainBtn.classList.remove('active', 'speaking');
+            // The "say hi" prompt invites speech only while the microphone is open.
+            hideReadyPrompt();
             // Keep label visible — only replace, never remove
             if (currentInputMode === 'voiceActivity') {
                 mainBtnIcon.textContent = 'GO';

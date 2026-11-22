@@ -11,7 +11,11 @@ Each member is matched to its declared source and compared byte for byte:
                              pins, read from the local npm cache (never extracted, never run)
 Also checked: no member without a declared source and no declared file missing; zip paths are
 plain; the manifest's id, version, publisher and target, against the redacted package.json;
-every asset it names exists; native files belong to the target only.
+every asset it names exists; native files belong to the target only. A file or module that
+names "targets" must be in the package of each target it names (a module by its package.json)
+and in no other. voice-input.json must be in the package exactly when "withoutVoiceInput" names
+its target, and hold that reason. No built bundle (dist/*.js) may find a file at run time
+relative to where its code sits, except on a line that holds a string of "bundleLookupsAllowed".
 The deny scan reads every member, the manifest and [Content_Types].xml included, whatever its
 type: its name, and its bytes as UTF-8 and as UTF-16LE at both byte alignments. The only
 exceptions are those of the private file "denyExemptFile" (a pattern's key and the file
@@ -44,8 +48,10 @@ import zipfile
 
 TEXT_EXT = {'.py', '.ts', '.js', '.json', '.md', '.txt', '.yaml', '.yml', '.sh', '.css', '.html', '.mjs', '.map'}
 TEXT_NAMES = {'LICENSE', '.gitignore', '.vscodeignore'}
+# The same table as pack.py's: Alpine's platform name matches no module's native folder.
 TARGETS = {'win32-x64': ('win32', 'x64'), 'win32-arm64': ('win32', 'arm64'), 'linux-x64': ('linux', 'x64'),
-           'linux-arm64': ('linux', 'arm64'), 'darwin-x64': ('darwin', 'x64'), 'darwin-arm64': ('darwin', 'arm64')}
+           'linux-arm64': ('linux', 'arm64'), 'linux-armhf': ('linux', 'arm'), 'alpine-x64': ('alpine', 'x64'),
+           'alpine-arm64': ('alpine', 'arm64'), 'darwin-x64': ('darwin', 'x64'), 'darwin-arm64': ('darwin', 'arm64')}
 NS = '{http://schemas.microsoft.com/developer/vsx-schema/2011}'
 DECODINGS = (('utf-8', lambda b: b.decode('utf-8', 'replace')),
              ('utf-16le', lambda b: b.decode('utf-16-le', 'replace')),
@@ -75,6 +81,31 @@ class Mask:
 
 def git(repo, *args):
     return subprocess.run(['git', '-C', repo, *args], check=True, capture_output=True).stdout
+
+
+LOOKUPS = (('__dirname', re.compile(r'\b__dirname\b')), ('__filename', re.compile(r'\b__filename\b')),
+           ('import.meta', re.compile(r'\bimport\.meta\b')), ('process.cwd', re.compile(r'\bprocess\.cwd\s*\(')),
+           ('require.resolve', re.compile(r'\brequire\.resolve\s*\(')),
+           ('aliased require', re.compile(r'\b(?:\w+Require|__non_webpack_require__|createRequire|module\.require)\s*\(')),
+           ('native load', re.compile(r'\bprocess\.dlopen\s*\(')))
+LOADER = re.compile(r'(?<![\w.$])(require|import)\s*\(')
+LITERAL = re.compile(r"""\s*(?:'[^'\\\n]*'|"[^"\\\n]*"|`[^`\\$\n]*`)\s*\)""")
+
+
+def bundle_lookups(text, allowed):
+    """Each line of a built bundle that finds a file at run time relative to where its code sits:
+    __dirname, __filename, import.meta, process.cwd(), require.resolve, an aliased require,
+    process.dlopen, or a require or import whose argument is not one plain string literal. A line
+    holding one of the allowed strings is passed."""
+    hits = []
+    for number, line in enumerate(text.split('\n'), 1):
+        if any(a in line for a in allowed):
+            continue
+        kinds = [k for k, rx in LOOKUPS if rx.search(line)]
+        kinds += [f'computed {m.group(1)}' for m in LOADER.finditer(line) if not LITERAL.match(line, m.end())][:1]
+        if kinds:
+            hits.append(f'line {number}: {", ".join(kinds)}: {line.strip()[:120]}')
+    return hits
 
 
 def is_text(name):
@@ -185,18 +216,48 @@ def verify(mask):
         elif n not in ('extension.vsixmanifest', '[Content_Types].xml') and not n.startswith('extension/'):
             problems.append(f'member outside extension/: {n}')
 
+    def for_target(entry, what):
+        """True when the entry ships for a.target; a problem when its "targets" cannot be read."""
+        targets = entry.get('targets')
+        if targets is None:
+            return True
+        if not targets or set(targets) - set(TARGETS) or not a.target:
+            problems.append(f'{what}: "targets" {targets} needs --target and known targets only')
+            return False
+        return a.target in targets
+
     # Declared sources.
     expected = {}  # member -> (expected bytes or None for module files, note)
+    not_here = {}  # member or module folder -> what declares it, for entries that are not for this target
     if cfg.get('readme'):
         expected['extension/readme.md'] = ('readme', cfg['readme']['src'])
     for f in cfg.get('files', []):
-        expected[f'extension/{f.get("dst", f["src"])}'] = ('file', f['src'])
+        member = f'extension/{f.get("dst", f["src"])}'
+        if for_target(f, f'file {f["src"]}'):
+            expected[member] = ('file', f['src'])
+        else:
+            not_here[member] = f'file {f["src"]}'
     for b in cfg.get('built', []):
         expected[f'extension/{b}'] = ('built', b)
-    modules = {m['name']: m for m in cfg.get('modules', [])}
+    without = cfg.get('withoutVoiceInput', {})
+    if a.target in without:
+        expected['extension/voice-input.json'] = ('voice', a.target)
+    modules = {}
+    for m in cfg.get('modules', []):
+        if for_target(m, f'module {m["name"]}'):
+            modules[m['name']] = m
+            expected_module = f'extension/node_modules/{m["name"]}/package.json'
+            if expected_module not in names:
+                problems.append(f'declared module missing: {m["name"]} (no {expected_module})')
+        else:
+            not_here[f'extension/node_modules/{m["name"]}/'] = f'module {m["name"]}'
     for m in expected:
         if m not in names:
             problems.append(f'declared member missing: {m}')
+    for n in names:
+        for place, what in not_here.items():
+            if n == place or (place.endswith('/') and n.startswith(place)):
+                problems.append(f'{n}: {what} is not for target {a.target}')
 
     lock = None  # read only when a module file has to be checked
     tar_cache = {}
@@ -245,6 +306,10 @@ def verify(mask):
                                 g2 = g2.replace('](' + base, '](')
                             if g2 != re.sub(r'\]\(\./', '](', w):
                                 verdict = 'DIFFERS (beyond link targets)'
+                elif kind == 'voice':
+                    want = (json.dumps({'available': False, 'reason': without[src]}, indent=1) + '\n').encode('utf-8')
+                    if data != want:
+                        verdict = 'DIFFERS'
                 elif kind == 'file':
                     blob = tracked(src)
                     if data != (red(blob) if is_text(n) else blob):
@@ -282,6 +347,14 @@ def verify(mask):
         rows.append(f'{verdict:<12} {len(data):>10} {sha}  {n}  <- {source}')
         if verdict != 'OK':
             problems.append(f'{n}: {verdict}')
+
+    # Run-time file lookups in the built bundles: code bundled into dist/ that finds a file relative
+    # to where its source sat (__dirname, a computed require ...) finds nothing once bundled.
+    allowed = cfg.get('bundleLookupsAllowed', [])
+    for n in names:
+        if n.startswith('extension/dist/') and n.endswith('.js'):
+            for hit in bundle_lookups(z.read(n).decode('utf-8', 'replace'), allowed):
+                problems.append(f'{n}: run-time file lookup not in "bundleLookupsAllowed": {hit}')
 
     # Deny scan: every member, the two generated ones included, whatever its type. A name is never exempted.
     applied = {}  # (member, key) -> [count, [decodings]]
