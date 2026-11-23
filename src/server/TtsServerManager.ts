@@ -5,6 +5,28 @@ import * as net from 'net';
 import * as path from 'path';
 import { log, debug, error, perf } from '../log';
 
+/** The server's own reason for stopping, read from the end of its stderr: its last "ERROR:" line
+ *  without the prefix, else its last line (a Python traceback ends with the exception). */
+export function serverReason(stderr: string): string {
+    const lines = stderr.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+    for (let i = lines.length - 1; i >= 0; i--) {
+        const m = /^ERROR:\s*(.+)$/.exec(lines[i]);
+        if (m) {
+            return m[1].slice(0, 300);
+        }
+    }
+    return lines.length ? lines[lines.length - 1].slice(0, 300) : '';
+}
+
+/** Exits 0 when this Python can import the TTS server's packages. find_spec locates them without
+ *  importing them, so the check takes milliseconds, not the seconds kokoro's own import takes. */
+const HAS_TTS_PACKAGES =
+    "import importlib.util as u, sys; sys.exit(0 if u.find_spec('kokoro') and u.find_spec('aiohttp') else 3)";
+
+/** How long a Python candidate may take to answer --version or the package check (both take well under a
+ *  second on a working Python). */
+const PYTHON_PROBE_TIMEOUT_MS = 15000;
+
 export class TtsServerManager {
     private process: ChildProcess | null = null;
     private ready = false;
@@ -70,8 +92,8 @@ export class TtsServerManager {
 
         const pythonCmd = await this.findPython();
         if (!pythonCmd) {
-            error('TTS: Python3 not found');
-            vscode.window.showWarningMessage('VOQR: Python3 required for TTS. Voice output unavailable.');
+            error('TTS: not started, because no Python was found');
+            vscode.window.showWarningMessage('VOQR: voice output needs Python 3.10 to 3.12, and no Python was found. Voice output unavailable.');
             return;
         }
 
@@ -91,42 +113,68 @@ export class TtsServerManager {
 
         debug(`TTS command: ${pythonParts[0]} ${args.join(' ')}`);
 
-        this.process = spawn(pythonParts[0], args, {
+        const proc = spawn(pythonParts[0], args, {
             stdio: ['ignore', 'pipe', 'pipe'],
         });
+        this.process = proc;
+        // The end of the server's stderr, kept so that its exit can say why in the server's own words.
+        let stderrTail = '';
 
-        this.process.stdout?.on('data', (data: Buffer) => {
+        proc.stdout?.on('data', (data: Buffer) => {
             debug(`[tts-server stdout] ${data.toString().trim()}`);
         });
 
-        this.process.stderr?.on('data', (data: Buffer) => {
-            debug(`[tts-server stderr] ${data.toString().trim()}`);
+        proc.stderr?.on('data', (data: Buffer) => {
+            const text = data.toString();
+            debug(`[tts-server stderr] ${text.trim()}`);
+            stderrTail = (stderrTail + text).slice(-4000);
         });
 
-        this.process.on('exit', (code, signal) => {
+        proc.on('exit', (code, signal) => {
             log(`TTS: server exited (code=${code}, signal=${signal})`);
+            if (this.process !== proc) {
+                return; // stopped, or already replaced: nothing to report for this one
+            }
+            const wasReady = this.ready;
             this.ready = false;
             this.process = null;
-
-            if (code !== 0 && code !== null && this.restartCount < this.maxRestarts) {
+            if (code === 0 || code === null) {
+                return;
+            }
+            const reason = serverReason(stderrTail);
+            if (!wasReady) {
+                // It never answered. A missing package or an unsuitable Python fails the same way on every
+                // start, so it is not restarted, and the person is told what the server said.
+                error(`TTS: server exited during start-up (code=${code})${reason ? `: ${reason}` : ''}`);
+                vscode.window.showErrorMessage(reason
+                    ? `VOQR: voice output could not start. The TTS server said: ${reason}`
+                    : `VOQR: voice output could not start. The TTS server exited with code ${code}.`);
+            } else if (this.restartCount < this.maxRestarts) {
                 this.restartCount++;
-                log(`TTS: restarting (attempt ${this.restartCount}/${this.maxRestarts})`);
+                log(`TTS: restarting (attempt ${this.restartCount}/${this.maxRestarts})${reason ? `; the server said: ${reason}` : ''}`);
                 this.startKokoro();
-            } else if (code !== 0 && code !== null) {
-                error(`TTS: server crashed ${this.maxRestarts} times — giving up`);
-                vscode.window.showErrorMessage('VOQR: Text-to-speech server crashed and could not restart. Voice output is unavailable. Try reloading VS Code.');
+            } else {
+                error(`TTS: server crashed ${this.maxRestarts} times — giving up${reason ? `; the server said: ${reason}` : ''}`);
+                vscode.window.showErrorMessage('VOQR: Text-to-speech server crashed and could not restart. Voice output is unavailable. ' +
+                    `Try reloading VS Code.${reason ? ` The server said: ${reason}` : ''}`);
             }
         });
 
-        this.process.on('error', (err) => {
+        proc.on('error', (err) => {
             error('TTS: failed to spawn server', err);
+            if (this.process !== proc) {
+                return;
+            }
             this.process = null;
+            vscode.window.showErrorMessage(`VOQR: voice output could not start: ${pythonParts[0]} could not be run (${err.message}).`);
         });
 
-        await this.waitForHealth();
+        await this.waitForHealth(proc);
     }
 
-    private async waitForHealth(): Promise<void> {
+    /** Waits for the server started as proc to answer. It ends quietly once proc has exited, failed or been
+     *  stopped, because proc's own handlers have then told the person why. */
+    private async waitForHealth(proc: ChildProcess): Promise<void> {
         const url = `${this.serverUrl}/health`;
         const maxAttempts = 60; // Kokoro takes longer to load (~5-10s for model download on first run)
         const intervalMs = 500;
@@ -134,9 +182,12 @@ export class TtsServerManager {
         log(`TTS: waiting for health at ${url}`);
 
         for (let i = 0; i < maxAttempts; i++) {
+            if (this.process !== proc) {
+                return;
+            }
             try {
                 const response = await fetch(url);
-                if (response.ok) {
+                if (response.ok && this.process === proc) {
                     const elapsed = perf.end('tts_server_startup', true);
                     this.ready = true;
                     log(`TTS: server ready (${i + 1} checks, ${elapsed.toFixed(0)}ms)`);
@@ -151,6 +202,9 @@ export class TtsServerManager {
             }
         }
 
+        if (this.process !== proc) {
+            return;
+        }
         error(`TTS: server failed to become healthy after ${maxAttempts} attempts`);
         vscode.window.showWarningMessage('VOQR: TTS server failed to start. Voice output unavailable.');
     }
@@ -199,36 +253,65 @@ export class TtsServerManager {
     }
 
     private async findPython(): Promise<string | null> {
-        // On Windows, try specific minor versions first (3.11-3.13 have ML wheel support).
-        // 'py -3.11' uses the Windows Python Launcher to target a specific version.
-        // Falls back to generic candidates if no compatible version is found.
+        // Try the minor versions Kokoro installs on first: kokoro 0.9.4 declares Requires-Python
+        // >=3.10,<3.13, and the plain python3 is often another version. 'py -3.11' uses the Windows
+        // Python Launcher to target a version. Falls back to generic candidates; on an unsuitable
+        // version the server says so itself.
         const candidates = process.platform === 'win32'
-            ? ['py -3.12', 'py -3.11', 'py -3.13', 'py -3.10', 'py', 'python', 'python3']
-            : ['python3', 'python'];
+            ? ['py -3.12', 'py -3.11', 'py -3.10', 'py', 'python', 'python3']
+            : ['python3.12', 'python3.11', 'python3.10', 'python3', 'python'];
 
+        // The first candidate that already holds kokoro and aiohttp is taken, whatever its place in
+        // the order: a person whose packages live in one interpreter keeps it when another Python is
+        // also on the machine. When none holds them, the first that runs is taken, and its server
+        // says what is missing.
+        let firstThatRuns: string | null = null;
         for (const cmd of candidates) {
-            try {
-                const parts = cmd.split(' ');
-                const proc = spawn(parts[0], [...parts.slice(1), '--version'], { stdio: 'pipe' });
-                let versionOutput = '';
-                proc.stdout?.on('data', (data: Buffer) => { versionOutput += data.toString(); });
-                proc.stderr?.on('data', (data: Buffer) => { versionOutput += data.toString(); });
-                const exitCode = await new Promise<number>((resolve) => {
-                    proc.on('exit', (code) => resolve(code ?? 1));
-                    proc.on('error', () => resolve(1));
-                });
-                if (exitCode === 0) {
-                    const version = versionOutput.trim();
-                    log(`TTS: found Python: "${cmd}" → ${version}`);
-                    return parts.length > 1 ? cmd : parts[0];
-                }
-            } catch {
+            const version = await this.runPython(cmd, ['--version']);
+            if (version.code !== 0) {
                 continue;
             }
+            log(`TTS: found Python: "${cmd}" → ${version.output.trim()}`);
+            firstThatRuns ??= cmd;
+            const packages = await this.runPython(cmd, ['-c', HAS_TTS_PACKAGES]);
+            if (packages.code === 0) {
+                log(`TTS: "${cmd}" has kokoro and aiohttp`);
+                return cmd;
+            }
+            debug(`TTS: "${cmd}" does not have both kokoro and aiohttp`);
         }
 
-        error('TTS: no compatible Python found (need 3.10-3.13 for ML dependencies)');
+        if (firstThatRuns) {
+            log(`TTS: no Python found with kokoro and aiohttp; using "${firstThatRuns}"`);
+            return firstThatRuns;
+        }
+        error('TTS: no Python found (Kokoro needs Python 3.10 to 3.12)');
         return null;
+    }
+
+    /** Runs a Python candidate ("py -3.12" is the launcher with its argument) and collects its output. A
+     *  candidate that has not exited within PYTHON_PROBE_TIMEOUT_MS is stopped and counts as not running, so
+     *  one that hangs cannot keep voice output from starting without a word. */
+    private async runPython(cmd: string, args: string[]): Promise<{ code: number; output: string }> {
+        try {
+            const parts = cmd.split(' ');
+            const proc = spawn(parts[0], [...parts.slice(1), ...args], { stdio: 'pipe' });
+            let output = '';
+            proc.stdout?.on('data', (data: Buffer) => { output += data.toString(); });
+            proc.stderr?.on('data', (data: Buffer) => { output += data.toString(); });
+            const code = await new Promise<number>((resolve) => {
+                const timer = setTimeout(() => {
+                    log(`TTS: "${cmd}" did not answer within ${PYTHON_PROBE_TIMEOUT_MS / 1000} s; skipped`);
+                    proc.kill();
+                    resolve(124);
+                }, PYTHON_PROBE_TIMEOUT_MS);
+                proc.on('exit', (exitCode) => { clearTimeout(timer); resolve(exitCode ?? 1); });
+                proc.on('error', () => { clearTimeout(timer); resolve(1); });
+            });
+            return { code, output };
+        } catch {
+            return { code: 1, output: '' };
+        }
     }
 
     private isPortInUse(port: number): Promise<boolean> {

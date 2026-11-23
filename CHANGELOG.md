@@ -6,6 +6,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-22
+
+This version corrects 0.2.2, which was offered on systems where VOQR has no voice.
+
+### Removed
+- The packages for Intel Macs, Windows on Arm, 32-bit Arm Linux and Alpine Linux. 0.2.2 added them so that those systems would no longer get 0.2.0, which cannot start. On them VOQR installed and started, but it had no voice, while the Marketplace's Install button and the "Added" entry below read as support. VOQR 0.2.3 is offered for Windows (x64), Linux (x64, arm64) and macOS (Apple silicon) only
+
+### Added
+- The README opens with a table of the systems VOQR is offered on, and of what has been run on each
+- In a remote session (SSH, containers, WSL, Codespaces), VOQR says once that it works only when VS Code runs on the computer that has your microphone
+
+### Fixed
+- When the text-to-speech server cannot start, VOQR shows the server's own reason, for example that Kokoro is not installed, with the install command for the Python it found. 0.2.2 showed "crashed and could not restart ... Try reloading VS Code" and, 30 seconds later, four warnings that the server failed to start, none of which said why; it also restarted three times a server that could only fail the same way
+- On a Python where Kokoro cannot install (3.13 and later), the text-to-speech server says that Kokoro needs Python 3.10 to 3.12
+- VOQR uses the first Python it finds that has Kokoro and aiohttp installed, so a setup that works keeps its Python when another is added. When none has them, it looks for Python 3.12, 3.11 and 3.10 before the plain `python3` on Linux and macOS, and no longer tries Python 3.13 before 3.10 on Windows
+- The README's setup steps say what you install yourself: whisper.cpp and a Whisper model, and Python 3.10 to 3.12 with Kokoro and aiohttp. It said before that no configuration was required and that Kokoro was installed on first use, which it is not
+
 ## [0.2.2] - 2026-11-22
 
 ### Added

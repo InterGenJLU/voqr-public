@@ -23,8 +23,8 @@ Voice quality reports are especially valuable — if the AI's response sounds wr
 ### Requirements
 
 - Node.js 18+
-- Python 3.10–3.13 (for TTS server)
-- whisper.cpp (for STT)
+- Python 3.10, 3.11 or 3.12, with `kokoro` and `aiohttp` installed (for the TTS server; Kokoro does not install on 3.13 or later)
+- whisper.cpp and a Whisper model (for STT); see the README's Setup section
 
 ## Code Guidelines
 

@@ -40,6 +40,26 @@ function readNoVoiceInput(extensionPath: string): string | null {
     }
 }
 
+/** What VOQR tells the person when it runs in a remote session, where the extension host (and with it the
+ *  microphone and speakers VOQR opens) is the remote machine, not the person's own. */
+const REMOTE_NOTICE = 'VOQR works when VS Code runs on the computer that has your microphone. ' +
+    'Remote sessions (SSH, containers, WSL, Codespaces) are not supported.';
+const REMOTE_NOTICE_SHOWN = 'voqr.remoteNoticeShown';
+
+/** In a remote session: the notice is logged at every start and shown once. */
+function noticeRemoteSession(context: vscode.ExtensionContext): void {
+    const remote = vscode.env.remoteName;
+    if (!remote) {
+        return;
+    }
+    log(`Remote session (${remote}): ${REMOTE_NOTICE}`);
+    if (context.globalState.get<boolean>(REMOTE_NOTICE_SHOWN)) {
+        return;
+    }
+    context.globalState.update(REMOTE_NOTICE_SHOWN, true);
+    vscode.window.showWarningMessage(REMOTE_NOTICE); // the sentence names VOQR itself
+}
+
 function updateStatusBar(state: 'idle' | 'listening' | 'speaking'): void {
     if (!statusBarItem) {return;}
     switch (state) {
@@ -105,6 +125,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (noVoiceInput) {
         log(`No voice input in this package: ${noVoiceInput}`);
     }
+    noticeRemoteSession(context);
 
     // micstream opens the microphone on Windows and macOS only. On Linux arecord does, and the
     // Linux packages carry no micstream, which AudioCapture's notes say crashes there.

@@ -1,8 +1,8 @@
 {
   "name": "voqr",
   "displayName": "VOQR — Voice for AI Chat",
-  "description": "Talk to any AI. Hear every answer. Local STT and TTS for every AI chat provider in VS Code.",
-  "version": "0.2.2",
+  "description": "Talk to any AI chat in VS Code and hear every answer, with speech-to-text and text-to-speech on your own machine. For Windows (x64), Linux (x64, arm64) and macOS (Apple silicon). You install whisper.cpp, and Python 3.10 to 3.12 with Kokoro: see Setup.",
+  "version": "0.2.3",
   "publisher": "intergen",
   "license": "MIT",
   "icon": "icon.png",

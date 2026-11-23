@@ -9,6 +9,7 @@ Accepts POST /synthesize with JSON { "text": "..." }, returns audio/wav.
 """
 
 import argparse
+import importlib.util
 import io
 import logging
 import re
@@ -16,6 +17,19 @@ import sys
 import time
 import wave
 import warnings
+
+# Checked before anything else is imported, so that a missing package is named plainly (on a bare
+# Python the first import to fail would otherwise be numpy's): kokoro 0.9.4 declares
+# Requires-Python >=3.10,<3.13, and the command given installs into this very interpreter.
+_missing = [name for name in ("kokoro", "aiohttp") if importlib.util.find_spec(name) is None]
+if _missing:
+    if "kokoro" in _missing and not ((3, 10) <= sys.version_info[:2] <= (3, 12)):
+        print(f"ERROR: Kokoro needs Python 3.10 to 3.12, and this is Python {sys.version.split()[0]} "
+              f"({sys.executable})", file=sys.stderr)
+    else:
+        print(f"ERROR: {' and '.join(_missing)} not installed. "
+              f"Run: \"{sys.executable}\" -m pip install {' '.join(_missing)}", file=sys.stderr)
+    sys.exit(1)
 
 import numpy as np
 
@@ -26,14 +40,14 @@ try:
         warnings.filterwarnings("ignore", message=".*dropout option adds dropout.*")
         warnings.filterwarnings("ignore", message=".*weight_norm.*is deprecated.*")
         from kokoro import KPipeline
-except ImportError:
-    print("ERROR: kokoro not installed. Run: pip install kokoro", file=sys.stderr)
+except ImportError as e:
+    print(f"ERROR: kokoro is installed but could not be loaded: {e}", file=sys.stderr)
     sys.exit(1)
 
 try:
     from aiohttp import web
-except ImportError:
-    print("ERROR: aiohttp not installed. Run: pip install aiohttp", file=sys.stderr)
+except ImportError as e:
+    print(f"ERROR: aiohttp is installed but could not be loaded: {e}", file=sys.stderr)
     sys.exit(1)
 
 logging.basicConfig(
