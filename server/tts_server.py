@@ -18,6 +18,12 @@ import time
 import wave
 import warnings
 
+# The exit code of this server's own lasting start-up failures (a package missing or unloadable, a Python
+# outside 3.10 to 3.12), which fail the same way at every start: EX_CONFIG of sysexits.h. TtsServerManager
+# does not restart a server that exits with it; any other failure before the server answers (a first
+# download that broke, for one) is tried again.
+EXIT_NOT_CONFIGURED = 78
+
 # Checked before anything else is imported, so that a missing package is named plainly (on a bare
 # Python the first import to fail would otherwise be numpy's): kokoro 0.9.4 declares
 # Requires-Python >=3.10,<3.13, and the command given installs into this very interpreter.
@@ -27,9 +33,12 @@ if _missing:
         print(f"ERROR: Kokoro needs Python 3.10 to 3.12, and this is Python {sys.version.split()[0]} "
               f"({sys.executable})", file=sys.stderr)
     else:
+        # Read by TtsServerManager, whose message then offers to install these packages into the Python
+        # that ran this script; it accepts only the names "kokoro" and "aiohttp" from this line.
+        print(f"VOQR-MISSING-PACKAGES: {' '.join(_missing)}", file=sys.stderr)
         print(f"ERROR: {' and '.join(_missing)} not installed. "
               f"Run: \"{sys.executable}\" -m pip install {' '.join(_missing)}", file=sys.stderr)
-    sys.exit(1)
+    sys.exit(EXIT_NOT_CONFIGURED)
 
 import numpy as np
 
@@ -39,16 +48,16 @@ try:
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message=".*dropout option adds dropout.*")
         warnings.filterwarnings("ignore", message=".*weight_norm.*is deprecated.*")
-        from kokoro import KPipeline
+        from kokoro import KModel, KPipeline
 except ImportError as e:
     print(f"ERROR: kokoro is installed but could not be loaded: {e}", file=sys.stderr)
-    sys.exit(1)
+    sys.exit(EXIT_NOT_CONFIGURED)
 
 try:
     from aiohttp import web
 except ImportError as e:
     print(f"ERROR: aiohttp is installed but could not be loaded: {e}", file=sys.stderr)
-    sys.exit(1)
+    sys.exit(EXIT_NOT_CONFIGURED)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -65,6 +74,22 @@ output_rate = 48000   # WAV output rate — matches common system rates, avoids 
 normalizer = TTSNormalizer()
 
 
+def _cached_kokoro_files(repo_id: str, voice_names: list) -> dict | None:
+    """Kokoro's config, model and voice files from the local Hugging Face cache, or None if any is missing.
+
+    Given only a repository and a voice name, Kokoro asks huggingface.co about each file at every start, even
+    when all of them are on disk. hf_hub_download with local_files_only makes no network request, so once the
+    files are cached the server starts without contacting anyone; until then they are fetched as before.
+    """
+    try:
+        from huggingface_hub import hf_hub_download
+        names = ['config.json', KModel.MODEL_NAMES[repo_id]] + [f'voices/{v}.pt' for v in voice_names]
+        return {n: hf_hub_download(repo_id=repo_id, filename=n, local_files_only=True) for n in names}
+    except Exception as e:  # not cached yet, or a library without these names: fetch as before
+        log.info(f"Kokoro's files are not all on disk yet ({type(e).__name__}): fetching them from huggingface.co")
+        return None
+
+
 def load_engine(voice_a: str, voice_b: str, blend: float, spd: float):
     """Load Kokoro pipeline and blend voices."""
     global pipeline, voice, speed
@@ -72,15 +97,28 @@ def load_engine(voice_a: str, voice_b: str, blend: float, spd: float):
     log.info(f"Loading Kokoro TTS pipeline...")
     start = time.monotonic()
 
+    repo_id = 'hexgrad/Kokoro-82M'
+    cached = _cached_kokoro_files(repo_id, [voice_a, voice_b])
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message=".*dropout option adds dropout.*")
         warnings.filterwarnings("ignore", message=".*weight_norm.*is deprecated.*")
-        pipeline = KPipeline(lang_code='b', repo_id='hexgrad/Kokoro-82M', device='cpu')
+        if cached:
+            model = KModel(repo_id=repo_id, config=cached['config.json'],
+                           model=cached[KModel.MODEL_NAMES[repo_id]]).to('cpu').eval()
+            pipeline = KPipeline(lang_code='b', repo_id=repo_id, model=model, device='cpu')
+        else:
+            pipeline = KPipeline(lang_code='b', repo_id=repo_id, device='cpu')
+    if cached:
+        log.info("Kokoro's model and voices are loaded from the local cache, with no network request")
 
     # Load and blend voices
     log.info(f"Blending voices: {voice_a} ({1-blend:.0%}) + {voice_b} ({blend:.0%})")
-    va = pipeline.load_voice(voice_a)
-    vb = pipeline.load_voice(voice_b)
+    if cached:
+        va = pipeline.load_single_voice(cached[f'voices/{voice_a}.pt'])
+        vb = pipeline.load_single_voice(cached[f'voices/{voice_b}.pt'])
+    else:
+        va = pipeline.load_voice(voice_a)
+        vb = pipeline.load_voice(voice_b)
     voice = (va * (1 - blend)) + (vb * blend)
 
     speed = spd

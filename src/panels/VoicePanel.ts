@@ -132,6 +132,12 @@ export class VoicePanel {
                 vscode.commands.executeCommand('workbench.extensions.search', `@id:${msg.payload as string}`);
                 break;
             case 'wizardInstall':
+                // An extension VS Code already has, built in (Copilot in recent VS Code) or installed, is not installed again
+                if (vscode.extensions.getExtension(msg.payload as string)) {
+                    panelLog.info(`[webview] Wizard: extension ${msg.payload as string} is already present (built in or installed)`);
+                    VoicePanel.sendMessage({ type: 'extensionInstalled' });
+                    break;
+                }
                 panelLog.info(`[webview] Wizard: installing extension ${msg.payload as string}`);
                 vscode.commands.executeCommand('workbench.extensions.installExtension', msg.payload as string).then(() => {
                     panelLog.info(`[webview] Wizard: extension installed`);
@@ -151,96 +157,6 @@ export class VoicePanel {
                 vscode.commands.executeCommand('voqr.wizardReload', wizardState);
                 break;
             }
-            case 'wizardWriteAitkModels': {
-                const models = msg.payload as { name: string; provider: string }[];
-                panelLog.info(`[webview] Wizard: writing ${models.length} models to AI Toolkit config`);
-                this.writeAitkModels(models);
-                break;
-            }
-        }
-    }
-
-    private async writeAitkModels(models: { name: string; provider: string }[]): Promise<void> {
-        const os = await import('os');
-        const fs = await import('fs');
-        const path = await import('path');
-
-        const configDir = path.join(os.homedir(), '.aitk', 'models');
-        const configPath = path.join(configDir, 'my-models.yml');
-        const backupPath = configPath + '.bak';
-
-        try {
-            // Ensure directory exists
-            if (!fs.existsSync(configDir)) {
-                fs.mkdirSync(configDir, { recursive: true });
-            }
-
-            // Back up existing file
-            if (fs.existsSync(configPath)) {
-                fs.copyFileSync(configPath, backupPath);
-                panelLog.info(`[wizard] Backed up ${configPath} → ${backupPath}`);
-            }
-
-            // Parse existing YAML (simple format — no library needed)
-            const providers = new Map<string, Set<string>>();
-            if (fs.existsSync(configPath)) {
-                const content = fs.readFileSync(configPath, 'utf-8');
-                let currentProvider = '';
-                for (const line of content.split('\n')) {
-                    const providerMatch = line.match(/^\s{2}- name:\s*(.+)/);
-                    const modelMatch = line.match(/^\s{6}- name:\s*(.+)/);
-                    if (providerMatch) {
-                        currentProvider = providerMatch[1].trim();
-                        if (!providers.has(currentProvider)) {
-                            providers.set(currentProvider, new Set());
-                        }
-                    } else if (modelMatch && currentProvider) {
-                        providers.get(currentProvider)?.add(modelMatch[1].trim());
-                    }
-                }
-            }
-
-            // Merge new models
-            for (const model of models) {
-                if (!providers.has(model.provider)) {
-                    providers.set(model.provider, new Set());
-                }
-                providers.get(model.provider)?.add(model.name);
-            }
-
-            // Write updated YAML
-            let yaml = '# yaml-language-server: $schema=\n\nversion: v0.1\nproviders:\n';
-            for (const [providerName, modelNames] of providers) {
-                yaml += `  - name: ${providerName}\n`;
-                yaml += `    models:\n`;
-                for (const modelName of modelNames) {
-                    yaml += `      - name: ${modelName}\n`;
-                }
-            }
-
-            fs.writeFileSync(configPath, yaml, 'utf-8');
-            panelLog.info(`[wizard] Wrote ${models.length} models to ${configPath}`);
-
-            // Verify the file is valid by re-reading it
-            const verify = fs.readFileSync(configPath, 'utf-8');
-            if (!verify.includes('version: v0.1') || !verify.includes('providers:')) {
-                throw new Error('Written YAML failed verification');
-            }
-
-        } catch (err) {
-            panelLog.info(`[wizard] Failed to write AI Toolkit config: ${err}`);
-
-            // Restore backup
-            const fs2 = await import('fs');
-            if (fs2.existsSync(backupPath)) {
-                fs2.copyFileSync(backupPath, configPath);
-                panelLog.info(`[wizard] Restored backup from ${backupPath}`);
-            }
-
-            VoicePanel.sendMessage({
-                type: 'wizardError',
-                payload: `Failed to configure AI Toolkit models: ${err}`,
-            });
         }
     }
 

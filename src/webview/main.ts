@@ -51,21 +51,13 @@ interface WizardChoice {
     goToStep: number;
 }
 
-interface WizardModel {
-    name: string;
-    provider: string;
-    checked?: boolean;
-}
-
 interface SetupStep {
-    type: 'install' | 'info' | 'action' | 'wait' | 'done' | 'choice' | 'select';
+    type: 'install' | 'info' | 'action' | 'wait' | 'done' | 'choice';
     title: string;
     description?: string;
     linkUrl?: string;
     linkText?: string;
     choices?: WizardChoice[];
-    models?: WizardModel[];
-    afterSelect?: number; // step to jump to after model selection
 }
 
 interface LMProvider {
@@ -80,29 +72,32 @@ interface LMProvider {
 // Only extensions that register as VS Code Language Model API providers.
 // Excludes walled gardens (Gemini, Continue, Cody) and CLI tools (Claude Code).
 const LM_PROVIDERS: LMProvider[] = [
-    // ── Free tier available ──
+    // ── Free to use: Copilot Free, with a GitHub account ──
     {
         name: 'GitHub Copilot',
         extId: 'GitHub.copilot-chat',
         vendor: 'copilot',
-        hint: 'Sign in for 50 free chats/mo',
+        hint: 'Part of recent VS Code — sign in with GitHub (Copilot Free available)',
         tier: 'free',
         steps: [
-            { type: 'install', title: 'Installing GitHub Copilot...' },
-            { type: 'info', title: 'Sign in to GitHub', description: 'Click the Copilot icon in the bottom-right status bar, then click "Enable more AI features." Sign in with GitHub, Google, or Apple when prompted. The free tier includes 50 chat messages per month.' },
+            { type: 'install', title: 'Checking for GitHub Copilot...' },
+            { type: 'info', title: 'Sign in to GitHub', description: 'Open the Command Palette (Ctrl+Shift+P) and run "Use AI Features with Copilot for free...", or click the Copilot icon in the status bar. Sign in with your GitHub account when prompted, then click Next below.' },
             { type: 'wait', title: 'Waiting for models...' },
             { type: 'done', title: 'You\'re all set!' },
         ],
     },
+    // ── Paid: Inference Providers at Hugging Face need credits, and a free account includes none
+    // (huggingface.co/docs/inference-providers/pricing, read 2026-11-23; a free account was answered 402) ──
     {
         name: 'Hugging Face',
         extId: 'HuggingFace.huggingface-vscode-chat',
         vendor: 'huggingface',
-        hint: 'Qwen, DeepSeek, open LLMs — free HF account',
-        tier: 'free',
+        hint: 'Qwen, DeepSeek, open LLMs — needs Hugging Face credits',
+        tier: 'paid',
         steps: [
             { type: 'install', title: 'Installing Hugging Face provider...' },
-            { type: 'action', title: 'Sign in or create an account', description: 'Already have a Hugging Face account? Click Next. Need one? Create a free account below, then click Next.', linkUrl: 'https://huggingface.co/join', linkText: 'Create a free account at huggingface.co' },
+            { type: 'action', title: 'Sign in or create an account', description: 'Already have a Hugging Face account? Click Next. Need one? Create one below, then click Next.', linkUrl: 'https://huggingface.co/join', linkText: 'Create an account at huggingface.co' },
+            { type: 'action', title: 'Add credits', description: 'Inference Providers at Hugging Face need credits, and a free account includes none. Buy credits, or subscribe to PRO for monthly included credits, then click Next.', linkUrl: 'https://huggingface.co/docs/inference-providers/pricing', linkText: 'Pricing at huggingface.co' },
             { type: 'action', title: 'Create an access token', description: 'Go to your Hugging Face Settings → Access Tokens → Create new token. Enable the "Inference: Make calls to Inference Providers" permission.', linkUrl: 'https://huggingface.co/settings/tokens/new?tokenType=fineGrained', linkText: 'Create token at huggingface.co' },
             { type: 'info', title: 'Add your token to VS Code', description: 'Open Command Palette (Ctrl+Shift+P) → Type "Manage Hugging Face Provider" → Paste your token in the text box → Press Enter. Then click Next below.' },
             { type: 'wait', title: 'Waiting for models...' },
@@ -125,20 +120,9 @@ const LM_PROVIDERS: LMProvider[] = [
     //         { type: 'done', title: 'You\'re all set!' },
     //     ],
     // },
-    // ── May require paid access ──
-    {
-        name: 'AI Toolkit',
-        extId: 'ms-windows-ai-studio.windows-ai-studio',
-        vendor: 'microsoft',
-        hint: 'GitHub Models, Foundry, Ollama — 130+ models added automatically',
-        tier: 'free',
-        steps: [
-            { type: 'install', title: 'Installing AI Toolkit...' },
-            { type: 'info', title: 'What to expect', description: 'AI Toolkit will register approximately 45 GitHub Models and 87 Foundry Models with VS Code. These include models from OpenAI, Anthropic, Google, Meta, DeepSeek, and others. GitHub Models are free with a GitHub account. Foundry Models may require an Azure account.' },
-            { type: 'wait', title: 'Waiting for models...' },
-            { type: 'done', title: 'You\'re all set!' },
-        ],
-    },
+    // ── AI Toolkit: removed from the guided setup in 0.2.4. Version 1.6.21 (now Foundry Toolkit) offered no
+    // models to VOQR after its setup (vendor aitk-foundry), and its install adds a Windows package, an agent
+    // skill and three Azure extensions.
     // ── OAI Compatible: disabled — extension has hostile UX (broken auto-install,
     // nightmare config panel, requires user to know endpoint URL + API key + exact model ID).
     // Research needed: can we build our own OpenAI-compatible provider registration
@@ -386,10 +370,24 @@ document.addEventListener('click', () => {
 
 let allModelsList: ModelInfo[] = [];
 let currentActiveId: string | null = null;
+/** Short names that two entries of one provider share in the current list (lower-case vendor + name). */
+let sharedFriendlyNames = new Set<string>();
+
+/** The name the panel shows: the short name, or the full name when another entry of the provider reads the same. */
+function panelModelName(name: string, vendor: string): string {
+    const friendly = getFriendlyModelName(name);
+    return sharedFriendlyNames.has(`${vendor.toLowerCase()}\u0000${friendly}`) ? name : friendly;
+}
 
 function renderModelList(models: ModelInfo[], activeId: string | null): void {
     allModelsList = models;
     currentActiveId = activeId;
+    const counts = new Map<string, number>();
+    for (const m of models) {
+        const key = `${m.vendor.toLowerCase()}\u0000${getFriendlyModelName(m.name)}`;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    sharedFriendlyNames = new Set([...counts].filter(([, n]) => n > 1).map(([key]) => key));
     modelDropdown.innerHTML = '';
 
     if (models.length === 0) {
@@ -572,14 +570,17 @@ function renderFilteredModels(query: string, models: ModelInfo[], activeId: stri
         modelDropdown.appendChild(allDone);
     }
 
-    // Paid providers section
+    // Paid providers section: only when the guided list has one
+    if (paidProviders.length === 0) {
+        return;
+    }
     const divider2 = document.createElement('div');
     divider2.className = 'dropdown-divider-thick';
     modelDropdown.appendChild(divider2);
 
     const paidHeader = document.createElement('div');
     paidHeader.className = 'dropdown-section-header paid';
-    paidHeader.textContent = '+ Add a model (may require paid access)';
+    paidHeader.textContent = '+ Add a model (paid)';
     modelDropdown.appendChild(paidHeader);
 
     let addedAnyPaid = false;
@@ -597,7 +598,7 @@ function renderFilteredModels(query: string, models: ModelInfo[], activeId: stri
     if (!addedAnyPaid) {
         const allDone = document.createElement('div');
         allDone.className = 'dropdown-section-note';
-        allDone.textContent = 'All providers installed';
+        allDone.textContent = 'All paid providers installed';
         modelDropdown.appendChild(allDone);
     }
 }
@@ -615,7 +616,7 @@ function createModelOption(model: ModelInfo, activeId: string | null): HTMLButto
 
     const name = document.createElement('span');
     name.className = 'model-option-name';
-    name.textContent = getFriendlyModelName(model.name);
+    name.textContent = panelModelName(model.name, model.vendor);
 
     const detail = document.createElement('span');
     detail.className = 'model-option-detail';
@@ -827,8 +828,6 @@ function renderWizardStep(): void {
         icon.textContent = '\u{1F517}'; // link
     } else if (step.type === 'choice') {
         icon.textContent = '\u{1F500}'; // shuffle/branch
-    } else if (step.type === 'select') {
-        icon.textContent = '\u{2611}'; // checkbox
     } else {
         icon.textContent = '\u{2139}'; // info
     }
@@ -935,46 +934,6 @@ function renderWizardStep(): void {
             choiceContainer.appendChild(card);
         }
         actions.appendChild(choiceContainer);
-    } else if (step.type === 'select' && step.models) {
-        // Render model checkboxes with an "Add selected" button
-        const selectContainer = document.createElement('div');
-        selectContainer.className = 'wizard-model-select';
-        const checkboxes: { name: string; provider: string; el: HTMLInputElement }[] = [];
-        for (const model of step.models) {
-            const row = document.createElement('label');
-            row.className = 'wizard-model-row';
-            const cb = document.createElement('input');
-            cb.type = 'checkbox';
-            cb.checked = model.checked ?? false;
-            const label = document.createElement('span');
-            label.textContent = model.name;
-            row.appendChild(cb);
-            row.appendChild(label);
-            selectContainer.appendChild(row);
-            checkboxes.push({ name: model.name, provider: model.provider, el: cb });
-        }
-        actions.appendChild(selectContainer);
-
-        const addBtn = document.createElement('button');
-        addBtn.className = 'wizard-btn wizard-btn-primary';
-        addBtn.textContent = 'Add selected models';
-        addBtn.addEventListener('click', () => {
-            const selected = checkboxes
-                .filter(c => c.el.checked)
-                .map(c => ({ name: c.name, provider: c.provider }));
-            if (selected.length === 0) {
-                return; // nothing selected
-            }
-            vsCodeApi.postMessage({ type: 'wizardWriteAitkModels', payload: selected });
-            // Jump to the afterSelect step or just advance
-            if (activeWizard && step.afterSelect !== undefined) {
-                activeWizard.currentStep = step.afterSelect;
-                renderWizardStep();
-            } else {
-                advanceWizard();
-            }
-        });
-        actions.appendChild(addBtn);
     } else {
         // Info or action step — show Next button
         const nextBtn = document.createElement('button');
@@ -1233,7 +1192,7 @@ window.addEventListener('message', (event: MessageEvent<{ type: string; payload?
         case 'modelInfo': {
             const info = msg.payload as { name: string; vendor: string };
             if (info) {
-                currentModelName = getFriendlyModelName(info.name);
+                currentModelName = panelModelName(info.name, info.vendor);
                 currentVendor = info.vendor;
                 modelNameEl.textContent = currentModelName;
                 modelBtn.title = info.name; // raw name on hover

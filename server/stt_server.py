@@ -44,7 +44,14 @@ def load_model(model_size: str, device: str, compute_type: str) -> WhisperModel:
     """Load the Whisper model."""
     log.info(f"Loading faster-whisper model: {model_size} (device={device}, compute={compute_type})")
     start = time.monotonic()
-    m = WhisperModel(model_size, device=device, compute_type=compute_type)
+    # From the local cache first: with local_files_only, faster-whisper's download step makes no network
+    # request, so a start does not ask huggingface.co about a model that is already on disk.
+    try:
+        m = WhisperModel(model_size, device=device, compute_type=compute_type, local_files_only=True)
+        log.info("Model loaded from the local cache, with no network request")
+    except Exception as e:  # not cached yet, or a faster-whisper without the option: fetch as before
+        log.info(f"Model not on disk yet ({type(e).__name__}): fetching it from huggingface.co")
+        m = WhisperModel(model_size, device=device, compute_type=compute_type)
     elapsed = time.monotonic() - start
     log.info(f"Model loaded in {elapsed:.2f}s")
     return m

@@ -1,8 +1,8 @@
 {
   "name": "voqr",
   "displayName": "VOQR — Voice for AI Chat",
-  "description": "Talk to any AI chat in VS Code and hear every answer, with speech-to-text and text-to-speech on your own machine. For Windows (x64), Linux (x64, arm64) and macOS (Apple silicon). You install whisper.cpp, and Python 3.10 to 3.12 with Kokoro: see Setup.",
-  "version": "0.2.3",
+  "description": "Talk to the AI models VS Code offers through its Language Model API (GitHub Copilot, Hugging Face and others) and hear every answer, with speech-to-text and text-to-speech on your own machine. Not Claude Code or Codex: they offer no models there. For Windows (x64), Linux (x64, arm64) and macOS (Apple silicon). You install whisper.cpp, and Python 3.10 to 3.12 with Kokoro: see Setup.",
+  "version": "0.2.4",
   "publisher": "intergen",
   "license": "MIT",
   "icon": "icon.png",
@@ -112,8 +112,8 @@
           ],
           "default": "auto",
           "enumDescriptions": [
-            "Bundled whisper.cpp server — works out of the box, no dependencies",
-            "GPU-accelerated faster-whisper server — requires Python (Pro feature)",
+            "whisper.cpp's whisper-server, which you install with a Whisper model (see Setup in the README)",
+            "A faster-whisper server that VOQR runs with Python on the CPU; you install faster-whisper",
             "Use your own STT server at the configured URL"
           ],
           "description": "Which STT backend VOQR manages."

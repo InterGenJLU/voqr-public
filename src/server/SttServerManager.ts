@@ -4,6 +4,12 @@ import { existsSync } from 'fs';
 import * as net from 'net';
 import * as path from 'path';
 import { log, debug, error, perf } from '../log';
+import { SERVER_START_BOUND_MS, waitForStart } from './startWait';
+
+/** After how long a start is called slow, and the person told once that speech recognition is still starting.
+ *  Measured whisper.cpp starts with the tiny model took 0.7 to 7.1 s (2026-11-23). It is also the whole wait
+ *  for an external server, which VOQR does not run. */
+const STT_SLOW_START_MS = 15000;
 
 type SttBackend = 'auto' | 'faster-whisper' | 'external';
 
@@ -169,9 +175,10 @@ export class SttServerManager {
 
         debug(`Command: ${binary} ${args.join(' ')}`);
 
-        this.process = spawn(binary, args, {
+        const proc = spawn(binary, args, {
             stdio: ['ignore', 'pipe', 'pipe'],
         });
+        this.process = proc;
 
         this.process.stdout?.on('data', (data: Buffer) => {
             debug(`[whisper-server stdout] ${data.toString().trim()}`);
@@ -183,14 +190,21 @@ export class SttServerManager {
 
         this.process.on('exit', (code, signal) => {
             log(`whisper-server exited (code=${code}, signal=${signal})`);
+            if (this.process !== proc) {
+                return; // stopped (stop() lets go of the process first), or already replaced
+            }
+            const wasReady = this.ready;
             this.ready = false;
             this.process = null;
 
-            if (code !== 0 && code !== null && this.restartCount < this.maxRestarts) {
+            // VOQR did not end it, so every end is a failure, a signal or a clean exit included.
+            if (this.restartCount < this.maxRestarts) {
                 this.restartCount++;
-                log(`Restarting whisper-server (attempt ${this.restartCount}/${this.maxRestarts})`);
+                log(`Restarting whisper-server (attempt ${this.restartCount}/${this.maxRestarts}) after ${signal ? `signal ${signal}` : `exit code ${code}`}`);
                 this.startWhisperCpp();
-            } else if (code !== 0 && code !== null) {
+            } else if (!wasReady) {
+                this.reportEndedDuringStart('whisper-server', code, signal);
+            } else {
                 error(`whisper-server crashed ${this.maxRestarts} times — giving up`);
                 vscode.window.showErrorMessage('VOQR: Speech-to-text server crashed and could not restart. Voice input is unavailable. Try reloading VS Code.');
             }
@@ -198,10 +212,14 @@ export class SttServerManager {
 
         this.process.on('error', (err) => {
             error('Failed to spawn whisper-server', err);
+            if (this.process !== proc) {
+                return;
+            }
             this.process = null;
+            vscode.window.showErrorMessage(`VOQR: voice input could not start: ${binary} could not be run (${err.message}).`);
         });
 
-        await this.waitForHealth();
+        await this.waitForHealth(proc);
     }
 
     private async startFasterWhisper(): Promise<void> {
@@ -236,9 +254,10 @@ export class SttServerManager {
 
         debug(`Command: ${pythonParts[0]} ${args.join(' ')}`);
 
-        this.process = spawn(pythonParts[0], args, {
+        const proc = spawn(pythonParts[0], args, {
             stdio: ['ignore', 'pipe', 'pipe'],
         });
+        this.process = proc;
 
         this.process.stdout?.on('data', (data: Buffer) => {
             debug(`[faster-whisper stdout] ${data.toString().trim()}`);
@@ -251,14 +270,21 @@ export class SttServerManager {
 
         this.process.on('exit', (code, signal) => {
             log(`faster-whisper server exited (code=${code}, signal=${signal})`);
+            if (this.process !== proc) {
+                return; // stopped (stop() lets go of the process first), or already replaced
+            }
+            const wasReady = this.ready;
             this.ready = false;
             this.process = null;
 
-            if (code !== 0 && code !== null && this.restartCount < this.maxRestarts) {
+            // VOQR did not end it, so every end is a failure, a signal or a clean exit included.
+            if (this.restartCount < this.maxRestarts) {
                 this.restartCount++;
-                log(`Restarting faster-whisper server (attempt ${this.restartCount}/${this.maxRestarts})`);
+                log(`Restarting faster-whisper server (attempt ${this.restartCount}/${this.maxRestarts}) after ${signal ? `signal ${signal}` : `exit code ${code}`}`);
                 this.startFasterWhisper();
-            } else if (code !== 0 && code !== null) {
+            } else if (!wasReady) {
+                this.reportEndedDuringStart('faster-whisper server', code, signal);
+            } else {
                 error(`faster-whisper server crashed ${this.maxRestarts} times — giving up`);
                 vscode.window.showErrorMessage('VOQR: Speech-to-text server crashed and could not restart. Voice input is unavailable. Try reloading VS Code.');
             }
@@ -266,39 +292,67 @@ export class SttServerManager {
 
         this.process.on('error', (err) => {
             error('Failed to spawn faster-whisper server', err);
+            if (this.process !== proc) {
+                return;
+            }
             this.process = null;
+            vscode.window.showErrorMessage(`VOQR: voice input could not start: ${pythonParts[0]} could not be run (${err.message}).`);
         });
 
-        await this.waitForHealth();
+        await this.waitForHealth(proc);
     }
 
-    private async waitForHealth(): Promise<void> {
+    /** Waits for the server to answer. A server this manager started (proc) is waited for while it runs, because
+     *  the faster-whisper backend downloads its model at first use; the person is told once when it is slow, told
+     *  again if it has still not answered after SERVER_START_BOUND_MS, and voice input turns on whenever it answers.
+     *  The wait ends quietly once proc has exited, failed or been stopped, because its own handlers then tell the
+     *  person why. An external server is given STT_SLOW_START_MS, as before. */
+    private async waitForHealth(proc?: ChildProcess): Promise<void> {
         const url = this.healthUrl;
-        const maxAttempts = 30;
-        const intervalMs = 500;
-
         log(`Waiting for STT server health at ${url}`);
 
-        for (let i = 0; i < maxAttempts; i++) {
-            try {
-                const response = await fetch(url);
-                if (response.ok) {
-                    const elapsed = perf.end('stt_server_startup', true);
-                    this.ready = true;
-                    log(`STT server ready (${i + 1} health checks, ${elapsed.toFixed(0)}ms)`);
-                    return;
-                }
-            } catch {
-                // Server not ready yet
-            }
+        let toldSlow = false;
+        const { outcome, checks } = await waitForStart(proc ? {
+            url,
+            alive: () => this.process === proc,
+            boundMs: SERVER_START_BOUND_MS,
+            slowAfterMs: STT_SLOW_START_MS,
+            onSlow: () => {
+                toldSlow = true;
+                log(`STT server still starting after ${STT_SLOW_START_MS / 1000} s; waiting while it runs`);
+                vscode.window.showInformationMessage('VOQR: speech recognition is still starting. Voice input begins when it is ready.');
+            },
+            onBound: () => {
+                toldSlow = true;
+                const minutes = SERVER_START_BOUND_MS / 60000;
+                error(`STT server: no answer after ${minutes} minutes; still waiting while it runs`);
+                vscode.window.showWarningMessage(`VOQR: speech recognition has still not answered after ${minutes} minutes. Voice input begins if it does; to start it again, reload VS Code.`);
+            },
+        } : { url, alive: () => true, boundMs: STT_SLOW_START_MS });
 
-            if (i < maxAttempts - 1) {
-                await new Promise(resolve => setTimeout(resolve, intervalMs));
+        if (outcome === 'ready') {
+            const elapsed = perf.end('stt_server_startup', true);
+            this.ready = true;
+            log(`STT server ready (${checks} health checks, ${elapsed.toFixed(0)}ms)`);
+            if (toldSlow) {
+                vscode.window.showInformationMessage('VOQR: voice input is ready.');
             }
+            return;
         }
-
-        error(`STT server failed to become healthy after ${maxAttempts} attempts`);
+        if (outcome === 'gone') {
+            return;
+        }
+        // An external server (no proc) given STT_SLOW_START_MS; a server VOQR started is waited for while it runs.
+        error(`STT server did not answer within ${proc ? `${SERVER_START_BOUND_MS / 60000} minutes` : `${STT_SLOW_START_MS / 1000} s`}`);
         vscode.window.showErrorMessage('VOQR: STT server failed to start. Check Output panel for details.');
+    }
+
+    /** A server VOQR started ended before it ever answered, VOQR did not stop it, and its restarts are spent. The
+     *  start wait ends quietly once the process is gone, so this is the only word the person gets. */
+    private reportEndedDuringStart(name: string, code: number | null, signal: NodeJS.Signals | null): void {
+        const how = signal ? `signal ${signal}` : `exit code ${code}`;
+        error(`${name} ended during start-up (${how})`);
+        vscode.window.showErrorMessage(`VOQR: voice input could not start: the speech-to-text server ended (${how}) before it answered.`);
     }
 
     stop(): void {

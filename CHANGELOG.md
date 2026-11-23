@@ -6,6 +6,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-11-23
+
+### Added
+- When Kokoro or aiohttp is missing from the Python VOQR found (Python 3.10 to 3.12), its message offers an Install button. It runs that Python's `pip install` for the missing packages in a terminal named "VOQR: install", where pip's own output shows, and starts the speech server again when pip succeeds
+- VOQR names the microphone input in its log and in the panel, on every system. When the open microphone has heard nothing for 5 seconds, the panel says "No sound from" that input and asks you to check the input device
+
+### Fixed
+- Kokoro's first start downloads its model (about 330 MB). VOQR gave up on it after 30 seconds and stayed silent until VS Code was reloaded. It now waits while the server runs, says once that it is still starting or downloading, and turns voice output on in the same session. Speech recognition, which was given 15 seconds, waits the same way. After 15 minutes without an answer, VOQR says so and keeps waiting
+- A speech server that ends by itself is started again up to three times and then named in a message. Before, an end by a signal or with exit code 0 was told to nobody. A text-to-speech failure that lasts, such as a missing package or an unsuitable Python, is told at once, without retries
+- The model list keeps each model by its own id. Models with the same name were merged, so picking "GPT-5.6 Luna" in VS Code 1.147's built-in Copilot sent every request to a model kept for VS Code itself, which refuses extensions. A model refused that way now leaves the list with a plain message, and a change in the list keeps the model you picked while it is still offered
+- Kokoro makes no network request at start once its files are on your disk; it asked Hugging Face about them at every start. The faster-whisper backend tries your disk before the network
+- The guided setup no longer offers AI Toolkit, whose version 1.6.21 offered VOQR no models in a test, and no longer installs GitHub Copilot when VS Code has it built in
+- The description and the README say which chats VOQR reaches: the models that VS Code offers through its Language Model API, such as GitHub Copilot's and Hugging Face's. Claude Code and Codex offer none there, so VOQR cannot reach them. Before, they said that VOQR worked with every chat in VS Code
+- The README and the speech-recognition setting no longer claim what VOQR does not do. A custom voice and speaker identification are planned, not offered. VOQR runs faster-whisper on the CPU, not on a GPU, and it is not a paid feature. whisper.cpp is not bundled: you install it (see Setup). The README also says that VOQR works offline for speech only, after the first download, and it dates the other products' columns of its comparison
+
+### Changed
+- The README's systems table lists only the four systems VOQR is offered on; the others are named below it, each with its reason
+- The README lists Hugging Face as paid: since 2026-10-07 its free accounts get no inference credits. It notes that the first answer of a new install waits for VS Code's one-time prompt to let VOQR use the model, and that Whisper's tiny model is its least accurate
+
 ## [0.2.3] - 2026-11-22
 
 This version corrects 0.2.2, which was offered on systems where VOQR has no voice.

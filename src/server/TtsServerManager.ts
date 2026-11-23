@@ -4,6 +4,11 @@ import { existsSync } from 'fs';
 import * as net from 'net';
 import * as path from 'path';
 import { log, debug, error, perf } from '../log';
+import { SERVER_START_BOUND_MS, waitForStart } from './startWait';
+
+/** After how long a start is called slow, and the person told once that Kokoro is still starting. Measured
+ *  starts with the model already on disk took 7.6 to 26.6 s on three machines (2026-11-23). */
+const TTS_SLOW_START_MS = 30000;
 
 /** The server's own reason for stopping, read from the end of its stderr: its last "ERROR:" line
  *  without the prefix, else its last line (a Python traceback ends with the exception). */
@@ -17,6 +22,25 @@ export function serverReason(stderr: string): string {
     }
     return lines.length ? lines[lines.length - 1].slice(0, 300) : '';
 }
+
+/** The only packages VOQR offers to install, and the only names it accepts from the server's line below. */
+const INSTALLABLE_PACKAGES: readonly string[] = ['kokoro', 'aiohttp'];
+
+/** The packages server/tts_server.py names as missing, on a Python that can take them, in its stderr line
+ *  "VOQR-MISSING-PACKAGES: kokoro aiohttp". Any name other than kokoro or aiohttp is dropped. */
+export function missingPackages(stderr: string): string[] {
+    const m = /^VOQR-MISSING-PACKAGES:[ \t]*(.*)$/m.exec(stderr);
+    if (!m) {
+        return [];
+    }
+    const named = m[1].trim().split(/\s+/);
+    return INSTALLABLE_PACKAGES.filter((p) => named.includes(p));
+}
+
+/** The exit code server/tts_server.py gives for its own lasting start-up failures (a package missing or
+ *  unloadable, a Python outside 3.10 to 3.12): EX_CONFIG of sysexits.h. Such a failure is the same at every
+ *  start, so that server is not restarted; any other exit before it answered may pass, and is tried again. */
+export const TTS_EXIT_NOT_CONFIGURED = 78;
 
 /** Exits 0 when this Python can import the TTS server's packages. find_spec locates them without
  *  importing them, so the check takes milliseconds, not the seconds kokoro's own import takes. */
@@ -33,6 +57,8 @@ export class TtsServerManager {
     private port: number;
     private restartCount = 0;
     private maxRestarts = 3;
+    /** True while a package install the person asked for runs, so that a second click does not start another. */
+    private installing = false;
 
     /** extensionPath: the extension's own folder, the only place its server script is looked for. */
     constructor(private readonly extensionPath: string) {
@@ -119,6 +145,8 @@ export class TtsServerManager {
         this.process = proc;
         // The end of the server's stderr, kept so that its exit can say why in the server's own words.
         let stderrTail = '';
+        // Whether the server has said that it is fetching Kokoro's files (its first start), for the slow-start notice.
+        let fetching = false;
 
         proc.stdout?.on('data', (data: Buffer) => {
             debug(`[tts-server stdout] ${data.toString().trim()}`);
@@ -128,6 +156,9 @@ export class TtsServerManager {
             const text = data.toString();
             debug(`[tts-server stderr] ${text.trim()}`);
             stderrTail = (stderrTail + text).slice(-4000);
+            if (text.includes('from huggingface.co')) {
+                fetching = true;
+            }
         });
 
         proc.on('exit', (code, signal) => {
@@ -138,21 +169,36 @@ export class TtsServerManager {
             const wasReady = this.ready;
             this.ready = false;
             this.process = null;
-            if (code === 0 || code === null) {
-                return;
-            }
             const reason = serverReason(stderrTail);
-            if (!wasReady) {
-                // It never answered. A missing package or an unsuitable Python fails the same way on every
-                // start, so it is not restarted, and the person is told what the server said.
-                error(`TTS: server exited during start-up (code=${code})${reason ? `: ${reason}` : ''}`);
-                vscode.window.showErrorMessage(reason
-                    ? `VOQR: voice output could not start. The TTS server said: ${reason}`
-                    : `VOQR: voice output could not start. The TTS server exited with code ${code}.`);
-            } else if (this.restartCount < this.maxRestarts) {
+            // VOQR did not end it (stop() lets go of the process first), so every end is a failure, whatever its
+            // code: a signal (the system's out-of-memory killer, for one) or a clean exit included, which would
+            // otherwise go untold, as the start wait ends quietly once its process is gone. The server's own
+            // lasting failure (a missing package, an unsuitable Python) is the same at every start, so it is not
+            // restarted; any other end is tried again, before the server ever answered (a first download that
+            // broke) as after.
+            const how = signal ? `signal ${signal}` : `exit code ${code}`;
+            const lasting = code === TTS_EXIT_NOT_CONFIGURED;
+            if (!lasting && this.restartCount < this.maxRestarts) {
                 this.restartCount++;
-                log(`TTS: restarting (attempt ${this.restartCount}/${this.maxRestarts})${reason ? `; the server said: ${reason}` : ''}`);
+                log(`TTS: restarting (attempt ${this.restartCount}/${this.maxRestarts}) after ${how}${wasReady ? '' : ', it had not yet answered'}${reason ? `; the server said: ${reason}` : ''}`);
                 this.startKokoro();
+            } else if (!wasReady) {
+                error(`TTS: server ended during start-up (${how})${reason ? `: ${reason}` : ''}`);
+                const text = reason
+                    ? `VOQR: voice output could not start. The TTS server said: ${reason}`
+                    : `VOQR: voice output could not start. The TTS server ended (${how}) before it answered.`;
+                // A package the server named as missing, on a Python that can take it, is offered for install.
+                const packages = lasting ? missingPackages(stderrTail) : [];
+                if (packages.length > 0) {
+                    const install = `Install ${packages.join(' and ')}`;
+                    void vscode.window.showErrorMessage(text, install).then((choice) => {
+                        if (choice === install) {
+                            void this.installPackages(pythonParts, packages);
+                        }
+                    });
+                } else {
+                    vscode.window.showErrorMessage(text);
+                }
             } else {
                 error(`TTS: server crashed ${this.maxRestarts} times — giving up${reason ? `; the server said: ${reason}` : ''}`);
                 vscode.window.showErrorMessage('VOQR: Text-to-speech server crashed and could not restart. Voice output is unavailable. ' +
@@ -169,44 +215,121 @@ export class TtsServerManager {
             vscode.window.showErrorMessage(`VOQR: voice output could not start: ${pythonParts[0]} could not be run (${err.message}).`);
         });
 
-        await this.waitForHealth(proc);
+        await this.waitForHealth(proc, () => fetching);
     }
 
-    /** Waits for the server started as proc to answer. It ends quietly once proc has exited, failed or been
-     *  stopped, because proc's own handlers have then told the person why. */
-    private async waitForHealth(proc: ChildProcess): Promise<void> {
+    /** Waits for the server started as proc to answer, for as long as proc runs, because Kokoro's first start
+     *  downloads its model; the person is told once when it is slow, told again if it has still not answered after
+     *  SERVER_START_BOUND_MS, and voice output turns on whenever it answers. It ends quietly once proc has exited,
+     *  failed or been stopped, because proc's own handlers have then told the person why. */
+    private async waitForHealth(proc: ChildProcess, fetching: () => boolean): Promise<void> {
         const url = `${this.serverUrl}/health`;
-        const maxAttempts = 60; // Kokoro takes longer to load (~5-10s for model download on first run)
-        const intervalMs = 500;
-
         log(`TTS: waiting for health at ${url}`);
 
-        for (let i = 0; i < maxAttempts; i++) {
-            if (this.process !== proc) {
-                return;
-            }
-            try {
-                const response = await fetch(url);
-                if (response.ok && this.process === proc) {
-                    const elapsed = perf.end('tts_server_startup', true);
-                    this.ready = true;
-                    log(`TTS: server ready (${i + 1} checks, ${elapsed.toFixed(0)}ms)`);
-                    return;
-                }
-            } catch {
-                // not ready yet
-            }
+        let toldSlow = false;
+        const { outcome, checks } = await waitForStart({
+            url,
+            alive: () => this.process === proc,
+            boundMs: SERVER_START_BOUND_MS,
+            slowAfterMs: TTS_SLOW_START_MS,
+            onSlow: () => {
+                toldSlow = true;
+                const downloading = fetching();
+                log(`TTS: still starting after ${TTS_SLOW_START_MS / 1000} s${downloading ? ', downloading Kokoro files' : ''}; waiting while the server runs`);
+                vscode.window.showInformationMessage(downloading
+                    ? 'VOQR: Kokoro is downloading its model (about 330 MB) for its first start. Voice output begins when it is ready.'
+                    : 'VOQR: Kokoro is still starting. Voice output begins when it is ready.');
+            },
+            onBound: () => {
+                toldSlow = true;
+                const minutes = SERVER_START_BOUND_MS / 60000;
+                error(`TTS: no answer after ${minutes} minutes${fetching() ? ' (Kokoro said it was downloading its files)' : ''}; still waiting while the server runs`);
+                vscode.window.showWarningMessage(`VOQR: Kokoro has still not answered after ${minutes} minutes. Voice output begins if it does; to start it again, reload VS Code.`);
+            },
+        });
 
-            if (i < maxAttempts - 1) {
-                await new Promise(resolve => setTimeout(resolve, intervalMs));
+        if (outcome === 'ready') {
+            const elapsed = perf.end('tts_server_startup', true);
+            this.ready = true;
+            log(`TTS: server ready (${checks} checks, ${elapsed.toFixed(0)}ms)`);
+            if (toldSlow) {
+                vscode.window.showInformationMessage('VOQR: voice output is ready.');
             }
-        }
-
-        if (this.process !== proc) {
             return;
         }
-        error(`TTS: server failed to become healthy after ${maxAttempts} attempts`);
-        vscode.window.showWarningMessage('VOQR: TTS server failed to start. Voice output unavailable.');
+        if (outcome === 'gone') {
+            return;
+        }
+        // Not returned while onBound is given; kept so that no end of the wait is ever silent.
+        error(`TTS: server did not answer within ${SERVER_START_BOUND_MS / 60000} minutes`);
+        vscode.window.showWarningMessage(`VOQR: the TTS server did not answer within ${SERVER_START_BOUND_MS / 60000} minutes. Voice output is unavailable; reload VS Code to try again.`);
+    }
+
+    /** Installs the packages the server named as missing, after the person chose Install on its message: runs
+     *  <the Python that ran the server> -m pip install <packages> as a child process (no shell: each argument is
+     *  passed as it is) and shows pip's own output in a terminal named "VOQR: install". When pip ends with 0, the
+     *  server is started again (its first start may download Kokoro's model, which the start wait covers);
+     *  otherwise the person is told, and pip's output stays in that terminal. */
+    private async installPackages(pythonParts: string[], packages: string[]): Promise<void> {
+        if (this.installing) {
+            log('TTS: an install is already running; this request is not started');
+            return;
+        }
+        this.installing = true;
+        const args = [...pythonParts.slice(1), '-m', 'pip', 'install', ...packages];
+        const shown = [pythonParts[0], ...args].join(' ');
+        log(`TTS: installing ${packages.join(' and ')}, as the person chose: ${shown}`);
+        const write = new vscode.EventEmitter<string>();
+        let outcome: string;
+        try {
+            outcome = await new Promise<string>((resolve) => {
+                let child: ChildProcess | undefined;
+                let done = false;
+                const end = (how: string): void => {
+                    if (!done) {
+                        done = true;
+                        resolve(how);
+                    }
+                };
+                const toTerminal = (data: Buffer): void => write.fire(data.toString().replace(/\r?\n/g, '\r\n'));
+                const pty: vscode.Pseudoterminal = {
+                    onDidWrite: write.event,
+                    open: () => {
+                        write.fire(`VOQR runs: ${shown}\r\n\r\n`);
+                        child = spawn(pythonParts[0], args, { stdio: ['ignore', 'pipe', 'pipe'] });
+                        child.stdout?.on('data', toTerminal);
+                        child.stderr?.on('data', toTerminal);
+                        child.on('error', (err) => {
+                            write.fire(`\r\n${err.message}\r\n`);
+                            end(`could not be run (${err.message})`);
+                        });
+                        child.on('close', (code, signal) => {
+                            write.fire(`\r\npip ended (${signal ? `signal ${signal}` : `exit code ${code}`}).\r\n`);
+                            end(code === 0 ? 'ok' : signal ? `ended by signal ${signal}` : `ended with exit code ${code}`);
+                        });
+                    },
+                    close: () => {
+                        // The person closed the terminal: pip is stopped with it.
+                        if (child && child.exitCode === null && child.signalCode === null) {
+                            child.kill();
+                        }
+                        end('was stopped when its terminal was closed');
+                    },
+                };
+                vscode.window.createTerminal({ name: 'VOQR: install', pty }).show();
+            });
+        } finally {
+            this.installing = false;
+        }
+        if (outcome === 'ok') {
+            log(`TTS: ${packages.join(' and ')} installed; starting the server again`);
+            this.restartCount = 0;
+            await this.start();
+            return;
+        }
+        error(`TTS: the install of ${packages.join(' and ')} did not finish: pip ${outcome}`);
+        vscode.window.showErrorMessage(`VOQR: ${packages.join(' and ')} could not be installed: pip ${outcome}. ` +
+            'Its own output is in the terminal "VOQR: install".');
     }
 
     async waitUntilReady(timeoutMs = 30000): Promise<void> {

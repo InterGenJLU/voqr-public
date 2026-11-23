@@ -1,8 +1,53 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { execFile } from 'child_process';
 import type { RealTimeVAD } from 'avr-vad';
 import { audio, vad, stt, perf, error } from '../log';
+
+/** How VOQR names the input it records from when the system does not name it. */
+const DEFAULT_INPUT = 'the system default input';
+/** Below this level a sample is silence (the threshold of the silence figure in log.ts). */
+const SILENCE_LEVEL = 0.01;
+/** With the microphone open this long and every sample silent, the panel says no sound is coming in. */
+const NO_SOUND_AFTER_MS = 5000;
+
+/** Runs a command and resolves with its standard output, or null if it fails or runs longer than 2 s. */
+function readCommand(cmd: string, args: string[]): Promise<string | null> {
+    return new Promise((resolve) => {
+        execFile(cmd, args, { timeout: 2000, windowsHide: true, env: { ...process.env, LC_ALL: 'C' } }, (err, stdout) => {
+            resolve(err ? null : String(stdout));
+        });
+    });
+}
+
+/**
+ * The input arecord records from on Linux: arecord takes ALSA's default, which a sound server routes to its
+ * default source. Named as PipeWire (wpctl) or PulseAudio (pactl) names that source; null when neither answers.
+ */
+export async function linuxDefaultSourceName(): Promise<string | null> {
+    const wp = await readCommand('wpctl', ['inspect', '@DEFAULT_AUDIO_SOURCE@']);
+    const wpName = wp?.match(/^\s*\*?\s*node\.description = "(.+)"\s*$/m)?.[1];
+    if (wpName) {
+        return wpName;
+    }
+    const source = (await readCommand('pactl', ['get-default-source']))?.trim();
+    if (!source || source.startsWith('@')) {
+        return null;
+    }
+    let inSource = false;
+    for (const line of (await readCommand('pactl', ['list', 'sources']) ?? '').split('\n')) {
+        const text = line.trim();
+        if (text.startsWith('Source #')) {
+            inSource = false;
+        } else if (text.startsWith('Name: ')) {
+            inSource = text.slice('Name: '.length) === source;
+        } else if (inSource && text.startsWith('Description: ')) {
+            return text.slice('Description: '.length);
+        }
+    }
+    return source;
+}
 
 /** Microsoft's download page for the Visual C++ Redistributable. */
 export const VC_REDIST_PAGE = 'https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist';
@@ -83,6 +128,12 @@ export class AudioCapture {
     private events: AudioCaptureEvents;
     private sttUrl: string;
     private frameCount = 0;
+    /** The input this capture records from, as the system names it. */
+    private deviceName = DEFAULT_INPUT;
+    /** Whether any sample above silence has come in since the microphone opened. */
+    private heardSound = false;
+    private noSoundShown = false;
+    private noSoundTimer: ReturnType<typeof setTimeout> | null = null;
 
     constructor(events: AudioCaptureEvents, sttTranscribeUrl?: string) {
         this.events = events;
@@ -123,7 +174,7 @@ export class AudioCapture {
                     },
                     onVADMisfire: () => {
                         vad.debug('Misfire (segment too short)');
-                        this.events.onStatusChange('Listening...');
+                        this.events.onStatusChange(this.listeningStatus());
                     },
                     onFrameProcessed: () => {},
                     onSpeechRealStart: () => {
@@ -137,8 +188,11 @@ export class AudioCapture {
             this.vadInstance.start();
 
             this.events.onStatusChange('Opening microphone...');
+            this.deviceName = DEFAULT_INPUT;
             this.recording = this.openMic();
             this.frameCount = 0;
+            this.heardSound = false;
+            this.noSoundShown = false;
 
             const stream = this.recording.stream;
             audio.info(`Stream type: ${typeof stream}, readable: ${(stream as NodeJS.ReadableStream).readable}`);
@@ -158,8 +212,20 @@ export class AudioCapture {
                         chunk.length / 2,
                     );
                     const float32 = new Float32Array(int16.length);
+                    let peak = 0;
                     for (let i = 0; i < int16.length; i++) {
-                        float32[i] = int16[i] / 32768;
+                        const sample = int16[i] / 32768;
+                        float32[i] = sample;
+                        const level = sample < 0 ? -sample : sample;
+                        if (level > peak) {peak = level;}
+                    }
+
+                    if (!this.heardSound && peak >= SILENCE_LEVEL) {
+                        this.heardSound = true;
+                        if (this.noSoundShown) {
+                            audio.info(`Sound from ${this.deviceName} after the no-sound notice`);
+                            this.events.onStatusChange(this.listeningStatus());
+                        }
                     }
 
                     if (this.frameCount <= 3) {
@@ -213,7 +279,30 @@ export class AudioCapture {
             audio.info(`active=true, frameCount=${this.frameCount}, vadInstance=${!!this.vadInstance}`);
             perf.end('audio_startup');
             audio.info('Microphone open — listening');
-            this.events.onStatusChange('Listening...');
+            this.events.onStatusChange(this.listeningStatus());
+
+            // On Linux the input is named by the sound server, read once arecord has started
+            if (process.platform === 'linux') {
+                linuxDefaultSourceName().then((name) => {
+                    if (!isLive()) {return;}
+                    const before = this.deviceName;
+                    this.deviceName = name ?? DEFAULT_INPUT;
+                    audio.info(`Recording from: ${this.deviceName} ${name ? `(the sound server's default source)` : `(neither wpctl nor pactl named it)`}`);
+                    if (!this.noSoundShown && this.deviceName !== before) {
+                        this.events.onStatusChange(this.listeningStatus());
+                    }
+                }).catch((err) => audio.error('Could not read the name of the default input', err));
+            }
+
+            // A microphone that stays silent gets a plain notice, instead of "Listening" with no end
+            this.clearNoSoundTimer();
+            this.noSoundTimer = setTimeout(() => {
+                this.noSoundTimer = null;
+                if (!isLive() || this.heardSound) {return;}
+                this.noSoundShown = true;
+                audio.info(`No sound from ${this.deviceName} in ${NO_SOUND_AFTER_MS / 1000} s with the microphone open (${this.frameCount} chunks, every sample below ${SILENCE_LEVEL})`);
+                this.events.onStatusChange(`No sound from ${this.deviceName}. Check the input device in your system settings.`);
+            }, NO_SOUND_AFTER_MS);
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Failed to start audio capture';
             error(`Audio capture startup failed: ${message}`, err);
@@ -226,6 +315,7 @@ export class AudioCapture {
     stop(): void {
         audio.info(`Stopping (active=${this.active}, totalFrames=${this.frameCount})`);
         this.active = false;
+        this.clearNoSoundTimer();
 
         if (this.recording) {
             audio.debug('Stopping mic capture');
@@ -248,6 +338,18 @@ export class AudioCapture {
             this.vadInstance.destroy();
             this.vadInstance = null;
             vad.debug('VAD destroyed');
+        }
+    }
+
+    /** The status while listening, naming the input. */
+    private listeningStatus(): string {
+        return `Listening to ${this.deviceName}...`;
+    }
+
+    private clearNoSoundTimer(): void {
+        if (this.noSoundTimer) {
+            clearTimeout(this.noSoundTimer);
+            this.noSoundTimer = null;
         }
     }
 
@@ -279,6 +381,10 @@ export class AudioCapture {
             for (const d of devices) {
                 audio.info(`  [${d.index}] ${d.name} (${d.maxInputChannels}ch @ ${d.defaultSampleRate}Hz${d.isDefault ? ' — DEFAULT' : ''})`);
             }
+            // micstream opens PortAudio's default input when no device is given: the one marked isDefault
+            const chosen = devices.find((d) => d.isDefault);
+            this.deviceName = chosen ? chosen.name : DEFAULT_INPUT;
+            audio.info(`Recording from: ${this.deviceName} (PortAudio's default input)`);
         } catch (err) {
             audio.error('Failed to enumerate PortAudio devices', err);
         }
@@ -333,7 +439,7 @@ export class AudioCapture {
             }
 
             if (this.active) {
-                this.events.onStatusChange('Listening...');
+                this.events.onStatusChange(this.listeningStatus());
             }
         } catch (err) {
             perf.end('stt_roundtrip', false);
